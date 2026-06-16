@@ -206,6 +206,9 @@ footer.nota{color:var(--suave);font-size:12px;margin-top:30px;border-top:1px sol
 .niv-card .pc{font-family:Georgia,serif;font-size:26px;color:var(--ink)}
 .niv-card .lb{font-size:11.5px;color:var(--suave);text-transform:uppercase;letter-spacing:.04em}
 .niv-card small{display:block;margin-top:4px;font-size:11px}
+.tab-niv{width:100%;border-collapse:collapse;font-size:13px}
+.tab-niv th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--suave);padding:6px 8px;border-bottom:2px solid var(--borda)}
+.tab-niv td{padding:7px 8px;border-bottom:1px solid #EFEFF3;color:var(--ink)}
 @media(max-width:760px){.niv-cmp{grid-template-columns:repeat(2,1fr)}}
 .lim-edit-row{display:grid;grid-template-columns:1fr 70px 70px 70px 70px 70px;gap:6px;align-items:center;padding:5px 0;border-bottom:1px dashed #E7EAF0;font-size:12.5px}
 .lim-edit-row.head{font-weight:600;border-bottom:1px solid var(--borda)}
@@ -272,7 +275,7 @@ footer.nota{color:var(--suave);font-size:12px;margin-top:30px;border-top:1px sol
     <div class="brand">
       <div class="selo-mini">PG</div>
       <h1>Pró-Gestão RPPS</h1>
-      <small>Implantação · Nível II · v4.0/2026</small>
+      <small id="brandSmall">Implantação · Nível II · v4.0/2026</small>
     </div>
     <div class="cliente-box" id="clienteBox"></div>
     <nav id="navMenu"></nav>
@@ -615,6 +618,12 @@ const ACOES = [
 ];
 
 const ESSENCIAIS = ACOES.filter(a=>a.essencial).map(a=>a.id);
+/* Critérios de certificação por nível (Manual Pró-Gestão 4.0, item 2.2.3) */
+const MIN_ACOES = {1:18, 2:20, 3:22, 4:24};      // mínimo de ações conformes
+const MIN_DIM   = {1:3, 2:8, 3:1};                // 50% por dimensão (Níveis I–III)
+const NIVEIS_PG = {1:'Nível I',2:'Nível II',3:'Nível III',4:'Nível IV'};
+function nivelAlvo(){ const n=parseInt(S.config&&S.config.nivelAlvo); return (n>=1&&n<=4)?n:2; }
+function nivAlvoTxt(){ return NIVEIS_PG[nivelAlvo()]; }
 
 /* ====== Plano de trabalho padrão (roteiro do item 2.3.1 do Manual) ====== */
 const PLANO_PADRAO = [
@@ -661,7 +670,7 @@ function salvarRegistro(){ try{ localStorage.setItem(CHAVE_REG, JSON.stringify(R
 
 function estadoInicial(){
   return {
-    config:{rpps:'', ente:'', uf:'SP', resp:'', cargo:'', carteira50:'nao', art280:'nao', dataAlvo:''},
+    config:{rpps:'', ente:'', uf:'SP', resp:'', cargo:'', carteira50:'nao', art280:'nao', dataAlvo:'', nivelAlvo:2},
     req:{},      // status por requisito: 'pend'|'and'|'ok'|'nc'|'na'
     docs:{},     // status por documento: 'pend'|'sol'|'rec'|'val'
     meta:{},     // por ação: {resp,prazo,obs}
@@ -720,6 +729,7 @@ function carregar(){
   if(!S.consTab) S.consTab='painel';
   S.novaAtiv=S.novaAtiv||null;
   if(!S.enq) S.enq={resolucao:'5272',nivelSugerido:2,itens:[],patrimonio:'',metaAtuarial:'',dataPos:''};
+  if(S.config && (S.config.nivelAlvo==null)) S.config.nivelAlvo=2;
 }
 function baixarJSON(obj, filename){
   const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});
@@ -822,18 +832,24 @@ function progAcao(a){
   return Math.round(100*sts.filter(s=>s==='ok').length/sts.length);
 }
 function resumoGeral(){
-  let conf=0, ncs=[], pendEss=[], total=ACOES.length;
+  let conf=0, ncs=[], pendEss=[], total=ACOES.length, confDim={1:0,2:0,3:0};
   ACOES.forEach(a=>{
     const st = statusAcao(a);
-    if(st==='conforme'||st==='disp') conf++;
+    if(st==='conforme'||st==='disp'){ conf++; confDim[a.dim]++; }
     else { ncs.push(a); if(a.essencial) pendEss.push(a.id); }
   });
   const essOk = pendEss.length===0;
-  const aptoII = conf>=20 && essOk;
-  const aptoI  = conf>=18 && essOk;
+  function dimOk(L){ return L>=4 ? (confDim[1]>=6&&confDim[2]>=16&&confDim[3]>=2)
+                                 : (confDim[1]>=MIN_DIM[1]&&confDim[2]>=MIN_DIM[2]&&confDim[3]>=MIN_DIM[3]); }
+  function aptoNivel(L){ return conf>=MIN_ACOES[L] && essOk && dimOk(L); }
+  const aptoPorNivel={1:aptoNivel(1),2:aptoNivel(2),3:aptoNivel(3),4:aptoNivel(4)};
+  let nivelAtingido=0; for(let L=4;L>=1;L--){ if(aptoPorNivel[L]){ nivelAtingido=L; break; } }
+  const alvo=nivelAlvo();
   let docsTot=0, docsOk=0;
   ACOES.forEach(a=>a.docs.forEach((_,i)=>{docsTot++; const d=docStatus(a.id,i); if(d==='val'||d==='rec')docsOk++;}));
-  return {conf,total,essOk,pendEss,aptoII,aptoI,docsTot,docsOk};
+  return {conf,total,essOk,pendEss,confDim,alvo,minAlvo:MIN_ACOES[alvo],dimOkAlvo:dimOk(alvo),
+          apto:aptoPorNivel[alvo],aptoPorNivel,nivelAtingido,
+          aptoII:aptoPorNivel[2],aptoI:aptoPorNivel[1],docsTot,docsOk};
 }
 const PILL = {conforme:['p-conforme','Conforme'],parcial:['p-parcial','Em andamento'],nao:['p-nao','Não conforme'],pend:['p-pend','Pendente'],disp:['p-disp','Dispensada (art. 280)']};
 const PILL_DOC = {pend:'Pendente',sol:'Solicitado',rec:'Recebido',val:'Validado'};
@@ -848,7 +864,7 @@ function nomeEnte(){ return (S.config.ente||'[Município/Ente]') + (S.config.uf?
    ================================================================ */
 const VISTAS = [
  ['painel','Painel de Conformidade','1'],
- ['acoes','As 24 Ações · Nível II','2'],
+ ['acoes','As 24 Ações','2'],
  ['docs','Solicitação de Documentos','3'],
  ['enq','Enquadramento de Investimentos','4'],
  ['plano','Planejamento','5'],
@@ -871,8 +887,11 @@ function render(){
   }
   const R = resumoGeral();
   const nv = document.getElementById('navVerdict');
-  nv.className = 'nav-verdict '+(R.aptoII?'ok':'nao');
-  nv.innerHTML = '<b>'+(R.aptoII?'✓ Apto ao Nível II':'Ainda não apto ao Nível II')+'</b>' + R.conf+'/24 ações conformes · Essenciais: '+(13-R.pendEss.length)+'/13';
+  nv.className = 'nav-verdict '+(R.apto?'ok':'nao');
+  nv.innerHTML = '<b>'+(R.apto?'✓ Apto ao '+NIVEIS_PG[R.alvo]:'Ainda não apto ao '+NIVEIS_PG[R.alvo])+'</b>'
+    + R.conf+'/24 conformes (mín. '+R.minAlvo+') · Essenciais '+(13-R.pendEss.length)+'/13'
+    + (R.nivelAtingido && R.nivelAtingido!==R.alvo ? ' · hoje atinge '+NIVEIS_PG[R.nivelAtingido] : (R.nivelAtingido?'':''));
+  const bs=document.getElementById('brandSmall'); if(bs) bs.textContent='Implantação · '+NIVEIS_PG[R.alvo]+' · v4.0/2026';
   const el = document.getElementById('conteudo');
   (({clientes:vClientes,painel:vPainel,acoes:vAcoes,docs:vDocs,enq:vEnq,plano:vPlano,criador:vCriador,consult:vConsult,modelos:vModelos,preaud:vPre,config:vConfig})[S.vista]||vPainel)(el);
 }
@@ -885,40 +904,47 @@ function _estadoDe(id){
   if(!st.req) st.req={}; if(!st.docs) st.docs={}; if(!st.config) st.config={};
   if(!st.plano) st.plano=[]; if(!st.anexos) st.anexos={};
   if(!st.enq) st.enq={resolucao:'5272',nivelSugerido:2,itens:[],patrimonio:''};
+  if(st.config && st.config.nivelAlvo==null) st.config.nivelAlvo=2;
+  try{ if(st.enq && !st.enq.limites) st.enq.limites=limitesPadrao(st.enq.resolucao||'5272'); }catch(e){}
   return st;
 }
 // resumo de aderência de UM cliente sem mudar o cliente atual (troca o estado temporariamente)
 function resumoCliente(id){
   const bak=S;
   S=_estadoDe(id);
-  let r=null; try{ r=resumoGeral(); }catch(e){}
+  let r=null, rec=null;
+  try{ r=resumoGeral(); }catch(e){}
+  try{ const a=analiseNivel(); rec={recomendado:a.recomendado, temCarteira:a.temCarteira}; }catch(e){}
   const cfg=Object.assign({},S.config||{});
   const enq=S.enq||{};
   const base=(enq.dair&&enq.dair.baseLimites)|| (parseFloat(enq.patrimonio)||0);
   const temDair=!!(enq.dair);
   const conferido=!!(enq.dair&&enq.dair.conferido);
   S=bak;
-  return {r,cfg,base,temDair,conferido};
+  return {r,cfg,base,temDair,conferido,rec};
 }
 function abrirCliente(id){ trocarCliente(id); irPara('painel'); }
 
 function vClientes(el){
   const cards = REG.lista.map(c=>{
-    const d=resumoCliente(c.id), r=d.r||{conf:0,pendEss:[1,2,3,4,5,6,7,8,9,10,11,12,13],aptoII:false};
-    const conf=r.conf||0, essOk=(13-(r.pendEss?r.pendEss.length:13)), apto=r.aptoII;
+    const d=resumoCliente(c.id), r=d.r||{conf:0,pendEss:[1,2,3,4,5,6,7,8,9,10,11,12,13],alvo:2,minAlvo:20,apto:false,nivelAtingido:0};
+    const conf=r.conf||0, essOk=(13-(r.pendEss?r.pendEss.length:13)), apto=r.apto, alvo=r.alvo||2;
     const pct=Math.round(100*conf/24);
     const nome=esc(d.cfg.ente||d.cfg.rpps||c.nome||'Cliente');
-    const sub=esc(d.cfg.rpps && d.cfg.ente ? d.cfg.rpps : (d.cfg.uf?('UF '+d.cfg.uf):'Cadastro incompleto'))+(d.cfg.uf && !(d.cfg.rpps&&d.cfg.ente)?'':(d.cfg.uf?(' · '+d.cfg.uf):''));
+    const sub=esc((d.cfg.rpps && d.cfg.ente)? d.cfg.rpps : (d.cfg.uf?('UF '+d.cfg.uf):'Cadastro incompleto'))+((d.cfg.uf)?(' · '+d.cfg.uf):'');
     const barColor = apto? 'var(--verde)' : (pct>=60?'var(--ouro)':'var(--vinho)');
     const carteira = d.base>0 ? ('R$ '+fmtBRL(d.base)+(d.temDair?(d.conferido?' ✓':''):'')) : '—';
     const atual = c.id===CLIENTE_ATUAL;
+    const recN = d.rec && d.rec.temCarteira ? d.rec.recomendado : null;
+    const sugere = recN ? ('<div style="font-size:11.5px;margin:0 2px 10px;color:'+(recN===alvo?'var(--suave)':'var(--azul)')+'">Sugerido pela carteira: <b>'+NIVEIS_PG[recN]+'</b>'+(recN===alvo?' (= alvo)':' · alvo atual: '+NIVEIS_PG[alvo])+'</div>') : '';
     return `<div class="cli-card${atual?' atual':''}">
       <h3>${nome}</h3>
       <div class="uf">${sub}${atual?' · <b style="color:var(--ouro)">em edição</b>':''}</div>
-      <span class="cli-badge ${apto?'ok':'no'}">${apto?'&#10003; Apto ao Nível II':'Em implantação'}</span>
+      <span class="cli-badge ${apto?'ok':'no'}">${apto?'&#10003; Apto ao '+NIVEIS_PG[alvo]:'Em implantação · '+NIVEIS_PG[alvo]}</span>
       <div class="cli-bar"><span style="width:${pct}%;background:${barColor}"></span></div>
+      ${sugere}
       <div class="cli-metrics">
-        <div><b>${conf}/24</b>ações conformes</div>
+        <div><b>${conf}/24</b>conformes (mín. ${r.minAlvo})</div>
         <div><b>${essOk}/13</b>essenciais</div>
         <div><b>${carteira}</b>carteira (base)</div>
       </div>
@@ -953,7 +979,7 @@ function vPainel(el){
   }).join('');
   const pendentes = ACOES.filter(a=>!['conforme','disp'].includes(statusAcao(a)));
   el.innerHTML = `
-  <div class="topo"><div><h2>Painel de Conformidade — Nível II</h2><div class="sub">Acompanhamento da implantação das 24 ações do Pró-Gestão RPPS para ${esc(nomeRPPS())} · ${esc(nomeEnte())}. Para o Nível II são exigidas <b>no mínimo 20 ações conformes</b>, incluindo obrigatoriamente as <b>13 ações essenciais</b>.</div></div>
+  <div class="topo"><div><h2>Painel de Conformidade — ${nivAlvoTxt()}</h2><div class="sub">Acompanhamento da implantação das 24 ações do Pró-Gestão RPPS para ${esc(nomeRPPS())} · ${esc(nomeEnte())}. Para o <b>${nivAlvoTxt()}</b> são exigidas <b>no mínimo ${R.minAlvo} ações conformes</b>, com pelo menos <b>50% em cada dimensão</b>, incluindo obrigatoriamente as <b>13 ações essenciais</b>. <span style="color:var(--azul)">O nível pretendido é definido em Configurações.</span></div></div>
   <div class="acoes-topo"><button class="btn" onclick="exportar()">Exportar backup</button><label class="btn" style="display:inline-block">Importar backup<input type="file" accept=".json" style="display:none" onchange="importar(event)"></label></div></div>
 
   <div class="card"><div class="gauge-wrap">
@@ -961,12 +987,12 @@ function vPainel(el){
       <circle cx="85" cy="85" r="70" fill="none" stroke="#EEF0F4" stroke-width="13"/>
       <circle cx="85" cy="85" r="70" fill="none" stroke="#C9A227" stroke-width="13" stroke-linecap="round" stroke-dasharray="${(circ*pct/100).toFixed(1)} ${circ.toFixed(1)}"/>
       <circle cx="85" cy="85" r="58" fill="none" stroke="#13294B" stroke-width="1.5" stroke-dasharray="2 4"/>
-    </svg><div class="centro"><b>${pct}%</b><span>Nível II</span></div></div>
+    </svg><div class="centro"><b>${pct}%</b><span>${nivAlvoTxt()}</span></div></div>
     <div style="flex:1;min-width:260px">
-      <div class="verdict ${R.aptoII?'ok':'nao'}">
-        <h3>${R.aptoII?'APTO à auditoria de certificação — Nível II':'NÃO APTO à certificação Nível II (pré-auditoria)'}</h3>
-        <p>${R.conf} de 24 ações conformes (mínimo: 20) · Ações essenciais: ${13-R.pendEss.length}/13 ${R.essOk?'— todas atendidas':'— pendentes: '+R.pendEss.join(', ')}.
-        ${!R.aptoII && R.aptoI ? ' O RPPS já atenderia ao <b>Nível I</b> (mínimo 18 ações + essenciais).':''}</p>
+      <div class="verdict ${R.apto?'ok':'nao'}">
+        <h3>${R.apto?'APTO à auditoria de certificação — '+nivAlvoTxt():'NÃO APTO à certificação '+nivAlvoTxt()+' (pré-auditoria)'}</h3>
+        <p>${R.conf} de 24 ações conformes (mínimo: ${R.minAlvo}) · Ações essenciais: ${13-R.pendEss.length}/13 ${R.essOk?'— todas atendidas':'— pendentes: '+R.pendEss.join(', ')}.${!R.dimOkAlvo?' <b style="color:var(--vinho)">Atenção: falta atingir 50% das ações em alguma dimensão.</b>':''}
+        ${R.nivelAtingido?(R.nivelAtingido!==R.alvo?' Com a situação atual, o RPPS já atenderia ao <b>'+NIVEIS_PG[R.nivelAtingido]+'</b>.':''):' Ainda não atende a nenhum nível (faltam ações essenciais ou o mínimo da dimensão).'}</p>
       </div>
       <div style="margin-top:14px">${dimHtml}</div>
     </div>
@@ -995,7 +1021,8 @@ function vAcoes(el){
   const fd = S.filtroDim, fs = S.filtroSt;
   const lista = ACOES.filter(a=> (fd===0||a.dim===fd) && (fs==='todos'|| (fs==='ess'? a.essencial : statusAcao(a)===fs)) );
   el.innerHTML = `
-  <div class="topo"><div><h2>As 24 Ações — Requisitos do Nível II</h2><div class="sub">Marque a situação de cada requisito, anexe as evidências (PDF/JPG) e use a leitura automática para verificar se o documento contém os elementos exigidos. O status da ação é calculado automaticamente. Ações com borda dourada são <b>essenciais</b> (obrigatórias em todos os níveis).</div></div></div>
+  <div class="topo"><div><h2>As 24 Ações — Requisitos (base: Nível II)</h2><div class="sub">Marque a situação de cada requisito, anexe as evidências (PDF/JPG) e use a leitura automática para verificar se o documento contém os elementos exigidos. O status da ação é calculado automaticamente. Ações com borda dourada são <b>essenciais</b> (obrigatórias em todos os níveis).</div></div></div>
+  ${nivelAlvo()!==2 ? '<div class="resumo-nivel" style="margin-bottom:12px;border-left:4px solid var(--ouro)"><b>Nível pretendido: '+nivAlvoTxt()+'.</b> A régua da certificação (mínimo de '+MIN_ACOES[nivelAlvo()]+' ações + essenciais + 50% por dimensão) já está aplicada no Painel e na Pré-Auditoria. Os <b>requisitos detalhados abaixo descrevem o Nível II</b> (base); para o '+nivAlvoTxt()+' há exigências adicionais/ajustadas no Manual 4.0 (ex.: periodicidades de relatórios, itens de transparência, supervisão presencial nos Níveis III/IV) — considere-as ao avaliar cada ação.</div>' : ''}
   <div class="filtros">
     <button class="${fd===0?'ativo':''}" onclick="fDim(0)">Todas as dimensões</button>
     <button class="${fd===1?'ativo':''}" onclick="fDim(1)">1 · Controles Internos</button>
@@ -1124,6 +1151,19 @@ function vConfig(el){
     <div><label class="sec-title">Cargo do responsável</label><input style="width:100%" value="${esc(c.cargo)}" onchange="cfg('cargo',this.value)"></div>
     <div><label class="sec-title">Data-alvo da auditoria de certificação</label><input type="date" style="width:100%" value="${esc(c.dataAlvo)}" onchange="cfg('dataAlvo',this.value)"></div>
   </div></div>
+  <div class="card"><h3 class="serif" style="color:var(--ink);font-size:16px;margin-bottom:6px">Nível pretendido do Pró-Gestão</h3>
+    <p style="font-size:13px;color:var(--suave);margin-bottom:10px">Define a régua da certificação (mínimo de ações conformes) e o destaque dos limites de investimento. Em dúvida sobre qual mirar, veja a <a href="#" onclick="irPara('enq');return false;"><b>análise de viabilidade</b></a> na aba Enquadramento, que recomenda o nível com base na carteira.</p>
+    <div class="grid c2">
+      <div><label class="sec-title">Nível pretendido</label>
+      <select style="width:100%" onchange="setNivelAlvo(this.value)">
+        <option value="1" ${nivelAlvo()===1?'selected':''}>Nível I — mín. 18 ações · supervisão documental/remota</option>
+        <option value="2" ${nivelAlvo()===2?'selected':''}>Nível II — mín. 20 ações · supervisão documental/remota</option>
+        <option value="3" ${nivelAlvo()===3?'selected':''}>Nível III — mín. 22 ações · supervisão presencial · estrutura mais robusta</option>
+        <option value="4" ${nivelAlvo()===4?'selected':''}>Nível IV — todas as 24 ações · supervisão presencial</option>
+      </select></div>
+      <div style="display:flex;align-items:flex-end"><div style="font-size:12.5px;color:var(--suave);background:var(--azul-claro);border:1px solid #CBD9EE;border-radius:8px;padding:8px 10px">Todos os níveis exigem as <b>13 ações essenciais</b> e <b>50% das ações em cada dimensão</b> (3 em Controles Internos, 8 em Governança, 1 em Educação). Os <b>requisitos detalhados</b> exibidos nas 24 ações usam o <b>Nível II como base</b>; em III/IV há exigências adicionais no Manual.</div></div>
+    </div>
+  </div>
   <div class="card"><h3 class="serif" style="color:var(--ink);font-size:16px;margin-bottom:10px">Critérios condicionais</h3>
     <div class="grid c2">
       <div><label class="sec-title">Recursos aplicados superam R$ 50 milhões?</label>
@@ -1138,6 +1178,7 @@ function vConfig(el){
   </div>`;
 }
 function cfg(k,v){ S.config[k]=v; salvar(); render(); }
+function setNivelAlvo(v){ const n=parseInt(v)||2; S.config.nivelAlvo=n; if(S.enq) S.enq.nivelSugerido=n; salvar(); render(); }
 
 /* ================================================================
    ANEXOS DE EVIDÊNCIAS + LEITURA E ANÁLISE AUTOMÁTICA (PDF/JPG)
@@ -1366,8 +1407,8 @@ function mTermoAdesao(){
 function imprimirPlano(){
   const fases=[...new Set(S.plano.map(p=>p.f))];
   const stN={pend:'Pendente',and:'Em andamento',ok:'Concluída',atras:'Atrasada'};
-  imprimirHTML(cabecalhoDoc('PLANO DE TRABALHO DE IMPLANTAÇÃO DO PRÓ-GESTÃO RPPS — NÍVEL II','Elaborado conforme o roteiro do item 2.3.1 e a alínea “e” do Manual v4.0 · Emitido em '+hoje())+`
-  <p><b>Objetivo:</b> implantar as 24 ações das dimensões Controles Internos, Governança Corporativa e Educação Previdenciária, no nível de aderência II, assegurando a documentação dos procedimentos, o treinamento dos servidores, a definição de responsáveis e prazos e o acompanhamento permanente até a auditoria de certificação${S.config.dataAlvo? ' prevista para '+new Date(S.config.dataAlvo+'T12:00').toLocaleDateString('pt-BR'):''}.</p>
+  imprimirHTML(cabecalhoDoc('PLANO DE TRABALHO DE IMPLANTAÇÃO DO PRÓ-GESTÃO RPPS — '+nivAlvoTxt().toUpperCase(),'Elaborado conforme o roteiro do item 2.3.1 e a alínea “e” do Manual v4.0 · Emitido em '+hoje())+`
+  <p><b>Objetivo:</b> implantar as 24 ações das dimensões Controles Internos, Governança Corporativa e Educação Previdenciária, no nível de aderência ${nivAlvoTxt().replace('Nível ','')}, assegurando a documentação dos procedimentos, o treinamento dos servidores, a definição de responsáveis e prazos e o acompanhamento permanente até a auditoria de certificação${S.config.dataAlvo? ' prevista para '+new Date(S.config.dataAlvo+'T12:00').toLocaleDateString('pt-BR'):''}.</p>
   ${fases.map(f=>`<h2>Fase ${esc(f)}</h2>
   <table><tr><th>Tarefa</th><th style="width:18%">Responsável</th><th style="width:11%">Início</th><th style="width:11%">Conclusão</th><th style="width:13%">Status</th></tr>
   ${S.plano.filter(p=>p.f===f).map(p=>`<tr><td>${esc(p.t)}</td><td>${esc(p.resp)||'—'}</td><td>${p.ini?new Date(p.ini+'T12:00').toLocaleDateString('pt-BR'):'—'}</td><td>${p.fim?new Date(p.fim+'T12:00').toLocaleDateString('pt-BR'):'—'}</td><td>${stN[p.st]}</td></tr>`).join('')}</table>`).join('')}
@@ -1455,9 +1496,9 @@ function imprimirOficio(){
   if(!pend.length){ alert('Não há documentos pendentes ou apenas solicitados — todos já foram recebidos/validados.'); return; }
   let porAcao={};
   pend.forEach(p=>{ (porAcao[p.a.id]=porAcao[p.a.id]||{a:p.a,ds:[]}).ds.push(p.d); });
-  imprimirHTML(cabecalhoDoc('OFÍCIO DE SOLICITAÇÃO DE DOCUMENTOS E EVIDÊNCIAS','Preparação para a auditoria de certificação Pró-Gestão RPPS — Nível II · '+hoje())+`
+  imprimirHTML(cabecalhoDoc('OFÍCIO DE SOLICITAÇÃO DE DOCUMENTOS E EVIDÊNCIAS','Preparação para a auditoria de certificação Pró-Gestão RPPS — '+nivAlvoTxt()+' · '+hoje())+`
   <p>Prezados(as) responsáveis,</p>
-  <p>Para fins de instrução do processo de certificação institucional no Pró-Gestão RPPS — Nível II, e com vistas à pré-auditoria de conformidade, solicitamos o encaminhamento, em meio digital, dos documentos e evidências relacionados a seguir, organizados por ação do Manual v4.0, no prazo de ______ dias.</p>
+  <p>Para fins de instrução do processo de certificação institucional no Pró-Gestão RPPS — ${nivAlvoTxt()}, e com vistas à pré-auditoria de conformidade, solicitamos o encaminhamento, em meio digital, dos documentos e evidências relacionados a seguir, organizados por ação do Manual v4.0, no prazo de ______ dias.</p>
   ${Object.values(porAcao).map(g=>`<h3>Ação ${g.a.id} — ${esc(g.a.nome)}${g.a.essencial?' (essencial)':''}</h3><ul>${g.ds.map(d=>'<li>'+esc(d)+'</li>').join('')}</ul>`).join('')}
   <p>Os documentos comporão o dossiê de evidências que deverá ser preservado em meio digital por, no mínimo, 3 (três) anos.</p>
   <p>Atenciosamente,</p>
@@ -1495,13 +1536,13 @@ function vPre(el){
     return `<tr><td><b>${a.id}</b></td><td>${esc(a.nome)}</td><td>${a.essencial?'<span class="pill p-ess">Essencial</span>':'—'}</td><td>${pill(st)}</td><td>${acaoDispensada(a)?'—':pendReq+' req. · '+pendDoc+' doc.'}</td><td>${esc(m.resp)||'—'}</td></tr>`;
   }).join('');
   el.innerHTML = `
-  <div class="topo"><div><h2>Pré-Auditoria de Conformidade</h2><div class="sub">Simulação do resultado da auditoria de certificação com base na autoavaliação registrada nas 24 ações. A regra do Manual (item 2.2.3): a certificação é determinada pelo nível mais simples atingido — para o Nível II, no mínimo <b>20 ações</b> conformes e <b>todas as 13 essenciais</b> atendidas.</div></div>
+  <div class="topo"><div><h2>Pré-Auditoria de Conformidade</h2><div class="sub">Simulação do resultado da auditoria de certificação com base na autoavaliação registrada nas 24 ações, para o nível pretendido (<b>${nivAlvoTxt()}</b>, ajustável em Configurações). Regra do Manual (item 2.2.3): no mínimo <b>${R.minAlvo} ações</b> conformes, <b>50% por dimensão</b> e <b>todas as 13 essenciais</b>.</div></div>
   <div class="acoes-topo"><button class="btn ouro" onclick="imprimirPreAuditoria()">Emitir Relatório de Pré-Auditoria</button></div></div>
 
-  <div class="verdict ${R.aptoII?'ok':'nao'}" style="margin-bottom:14px">
-    <h3>${R.aptoII?'PARECER PRELIMINAR: APTO — o RPPS reúne condições para a auditoria de certificação no Nível II':'PARECER PRELIMINAR: NÃO APTO — há pendências impeditivas para o Nível II'}</h3>
-    <p>Ações conformes: <b>${R.conf}/24</b> (mínimo 20) · Essenciais atendidas: <b>${13-R.pendEss.length}/13</b>${R.pendEss.length?' — pendentes: <b>'+R.pendEss.join(', ')+'</b>':''} · Evidências recebidas/validadas: ${R.docsOk}/${R.docsTot}.
-    ${!R.aptoII&&R.aptoI?' <br>Situação atual já atenderia ao <b>Nível I</b> (≥ 18 ações + essenciais).':''}</p>
+  <div class="verdict ${R.apto?'ok':'nao'}" style="margin-bottom:14px">
+    <h3>${R.apto?'PARECER PRELIMINAR: APTO — o RPPS reúne condições para a auditoria de certificação no '+nivAlvoTxt():'PARECER PRELIMINAR: NÃO APTO — há pendências impeditivas para o '+nivAlvoTxt()}</h3>
+    <p>Ações conformes: <b>${R.conf}/24</b> (mínimo ${R.minAlvo}) · Essenciais atendidas: <b>${13-R.pendEss.length}/13</b>${R.pendEss.length?' — pendentes: <b>'+R.pendEss.join(', ')+'</b>':''}${!R.dimOkAlvo?' · <b style="color:var(--vinho)">falta 50% em alguma dimensão</b>':''} · Evidências recebidas/validadas: ${R.docsOk}/${R.docsTot}.
+    ${R.nivelAtingido&&R.nivelAtingido!==R.alvo?' <br>Com a situação atual, o RPPS já atingiria o <b>'+NIVEIS_PG[R.nivelAtingido]+'</b>.':''}</p>
   </div>
 
   <div class="card"><h3 class="serif" style="color:var(--ink);font-size:16px;margin-bottom:8px">Quadro geral por ação</h3>
@@ -1510,8 +1551,10 @@ function vPre(el){
   <div class="card"><h3 class="serif" style="color:var(--ink);font-size:16px;margin-bottom:8px">Recomendações para a auditoria real</h3>
   <ul style="margin-left:18px;font-size:13.5px;line-height:1.8">
    <li>Contratar entidade certificadora <b>credenciada pelo MPS</b> com antecedência; para renovação, iniciar com no mínimo <b>90 dias</b> antes do vencimento (item 2.3.2).</li>
-   <li>Auditoria de certificação do Nível II exige tempo mínimo <b>presencial de 2 dias</b> (1 dia se houver pré-auditoria contratada em renovação/mudança de nível, com o mesmo auditor).</li>
-   <li>Prever no Termo de Referência a <b>auditoria de supervisão</b> obrigatória nos 2 anos seguintes (Níveis I e II: documental/remota, focada nas 13 ações essenciais).</li>
+   ${R.alvo>=3
+     ? '<li>O '+nivAlvoTxt()+' exige <b>auditoria presencial</b> (mínimo de 2 dias; 1 dia se houver pré-auditoria contratada em renovação/mudança de nível, com o mesmo auditor) e <b>estrutura organizacional mais robusta</b> da unidade gestora.</li>'
+     : '<li>Nos Níveis I e II a <b>supervisão é documental/remota</b>, focada nas 13 ações essenciais — mas a auditoria de certificação inicial segue as regras do edital/credenciamento.</li>'}
+   <li>Prever no Termo de Referência a <b>auditoria de supervisão</b> obrigatória nos anos seguintes (Níveis I e II: documental/remota; Níveis III e IV: presencial).</li>
    <li>Os servidores responsáveis devem <b>conhecer os processos</b> objeto do ateste — o auditor verificará por indagações e reexecução.</li>
    <li>Manter o dossiê de evidências em meio digital organizado por ação (guarda mínima de 3 anos).</li>
    <li>Em caso de inconformidade apontada, o representante legal tem <b>15 dias corridos</b> do término da auditoria para recurso à Comissão do Pró-Gestão (item 2.4.3).</li>
@@ -1536,21 +1579,22 @@ function imprimirPreAuditoria(){
       ${m.resp||m.prazo? '<p><b>Responsável:</b> '+esc(m.resp||'—')+(m.prazo?' · <b>Prazo:</b> '+new Date(m.prazo+'T12:00').toLocaleDateString('pt-BR'):'')+'</p>':''}`;
     }).join('');
   }).join('');
-  imprimirHTML(cabecalhoDoc('RELATÓRIO DE PRÉ-AUDITORIA DE CONFORMIDADE — PRÓ-GESTÃO RPPS','Nível de aderência pretendido: II · Manual v4.0 · Emitido em '+hoje())+`
+  imprimirHTML(cabecalhoDoc('RELATÓRIO DE PRÉ-AUDITORIA DE CONFORMIDADE — PRÓ-GESTÃO RPPS','Nível de aderência pretendido: '+(R.alvo===1?'I':R.alvo===2?'II':R.alvo===3?'III':'IV')+' · Manual v4.0 · Emitido em '+hoje())+`
   <h2>1. Parecer preliminar</h2>
-  <p style="font-size:13pt"><b>${R.aptoII?'APTO':'NÃO APTO'}</b> — Com base na autoavaliação dos processos de trabalho, ${R.aptoII
-    ? 'o RPPS demonstra conformidade suficiente para se submeter à auditoria de certificação no Nível II: foram atendidas '+R.conf+' das 24 ações (mínimo exigido: 20), incluindo a totalidade das 13 ações essenciais.'
-    : 'o RPPS ainda não reúne as condições mínimas para a certificação no Nível II. Situação atual: '+R.conf+' de 24 ações conformes (mínimo: 20)'+(R.pendEss.length? '; ações essenciais pendentes: '+R.pendEss.join(', ')+' — o não atendimento de qualquer ação essencial impede a certificação em qualquer nível.':'.')}
-  ${!R.aptoII&&R.aptoI?' Observa-se que a situação atual já atenderia aos critérios quantitativos do Nível I (mínimo de 18 ações, com as essenciais).':''}</p>
-  <table><tr><th>Critério</th><th>Exigido (Nível II)</th><th>Apurado</th><th>Atende?</th></tr>
-  <tr><td>Ações conformes</td><td>≥ 20 de 24</td><td>${R.conf}</td><td>${R.conf>=20?'Sim':'Não'}</td></tr>
+  <p style="font-size:13pt"><b>${R.apto?'APTO':'NÃO APTO'}</b> — Com base na autoavaliação dos processos de trabalho, ${R.apto
+    ? 'o RPPS demonstra conformidade suficiente para se submeter à auditoria de certificação no '+nivAlvoTxt()+': foram atendidas '+R.conf+' das 24 ações (mínimo exigido: '+R.minAlvo+'), incluindo a totalidade das 13 ações essenciais e o mínimo por dimensão.'
+    : 'o RPPS ainda não reúne as condições mínimas para a certificação no '+nivAlvoTxt()+'. Situação atual: '+R.conf+' de 24 ações conformes (mínimo: '+R.minAlvo+')'+(R.pendEss.length? '; ações essenciais pendentes: '+R.pendEss.join(', ')+' — o não atendimento de qualquer ação essencial impede a certificação em qualquer nível.':'.')}
+  ${R.nivelAtingido&&R.nivelAtingido!==R.alvo?' Observa-se que a situação atual já atenderia aos critérios do '+NIVEIS_PG[R.nivelAtingido]+'.':''}</p>
+  <table><tr><th>Critério</th><th>Exigido (${nivAlvoTxt()})</th><th>Apurado</th><th>Atende?</th></tr>
+  <tr><td>Ações conformes</td><td>≥ ${R.minAlvo} de 24</td><td>${R.conf}</td><td>${R.conf>=R.minAlvo?'Sim':'Não'}</td></tr>
+  <tr><td>Mínimo de 50% por dimensão</td><td>3 / 8 / 1</td><td>${R.confDim[1]} / ${R.confDim[2]} / ${R.confDim[3]}</td><td>${R.dimOkAlvo?'Sim':'Não'}</td></tr>
   <tr><td>Ações essenciais atendidas</td><td>13 de 13</td><td>${13-R.pendEss.length}</td><td>${R.essOk?'Sim':'Não'}</td></tr>
   <tr><td>Evidências documentais recebidas/validadas</td><td>Dossiê completo</td><td>${R.docsOk} de ${R.docsTot}</td><td>${R.docsOk===R.docsTot?'Sim':'Parcial'}</td></tr></table>
   <p><b>Unidade gestora:</b> ${esc(nomeRPPS())} · <b>Ente:</b> ${esc(nomeEnte())} · <b>Coordenador do Pró-Gestão:</b> ${esc(S.config.resp||'—')}${S.config.dataAlvo? ' · <b>Auditoria prevista:</b> '+new Date(S.config.dataAlvo+'T12:00').toLocaleDateString('pt-BR'):''}</p>
   <div class="quebra"></div>
   ${blocos}
   <h2>Encaminhamentos</h2>
-  <p>As não conformidades e pendências relacionadas neste relatório deverão ser saneadas antes da contratação da auditoria de certificação, com registro das ações corretivas e atualização do dossiê de evidências. Após a certificação, o RPPS deverá manter procedimentos periódicos de autoavaliação (item 2.2.3) e submeter-se à auditoria de supervisão nos 2 anos seguintes (item 2.3.2).</p>
+  <p>As não conformidades e pendências relacionadas neste relatório deverão ser saneadas antes da contratação da auditoria de certificação, com registro das ações corretivas e atualização do dossiê de evidências. Após a certificação, o RPPS deverá manter procedimentos periódicos de autoavaliação (item 2.2.3) e submeter-se à auditoria de supervisão (Níveis I e II: documental/remota; Níveis III e IV: presencial).</p>
   ${assinaturas([[S.config.resp||'COORDENADOR DO PRÓ-GESTÃO',S.config.cargo||''],['REPRESENTANTE LEGAL DA UNIDADE GESTORA','']])}`);
 }
 
@@ -2129,7 +2173,7 @@ function mRelatorioAtividades(){
   +'<tr><th>Vigência</th><td>'+(c.inicio?new Date(c.inicio+'T12:00').toLocaleDateString('pt-BR'):'—')+' a '+(c.fim?new Date(c.fim+'T12:00').toLocaleDateString('pt-BR'):'—')+'</td></tr>'
   +'<tr><th>Cliente (RPPS / Ente)</th><td>'+esc(nomeRPPS())+' · '+esc(nomeEnte())+'</td></tr>'
   +'<tr><th>Escopo</th><td>'+esc(c.escopo||'Certificação institucional no Pró-Gestão RPPS — Nível II')+'</td></tr></table>';
- html+='<h2>2. Resumo executivo</h2><p>No período relatado foram registradas <b>'+r.nAt+' atividades</b>, totalizando <b>'+r.horas.toFixed(1)+ ' horas</b> de dedicação, com <b>'+r.ent+' entrega(s)</b> de produtos. Foram formalizadas <b>'+r.soTot+' solicitação(ões)</b> ao RPPS, das quais '+r.soAt+' integralmente atendidas e '+r.soPend+' ainda pendentes. O projeto encontra-se com <b>'+r.R.conf+' de 24 ações conformes</b> (mínimo de 20 para o Nível II) e <b>'+(13-r.R.pendEss.length)+' de 13 ações essenciais</b> atendidas. '+(r.R.aptoII?'O RPPS reúne condições para a auditoria de certificação no Nível II.':'Permanecem pendências a sanear antes da auditoria de certificação.')+'</p>';
+ html+='<h2>2. Resumo executivo</h2><p>No período relatado foram registradas <b>'+r.nAt+' atividades</b>, totalizando <b>'+r.horas.toFixed(1)+ ' horas</b> de dedicação, com <b>'+r.ent+' entrega(s)</b> de produtos. Foram formalizadas <b>'+r.soTot+' solicitação(ões)</b> ao RPPS, das quais '+r.soAt+' integralmente atendidas e '+r.soPend+' ainda pendentes. O projeto encontra-se com <b>'+r.R.conf+' de 24 ações conformes</b> (mínimo de '+r.R.minAlvo+' para o '+NIVEIS_PG[r.R.alvo]+') e <b>'+(13-r.R.pendEss.length)+' de 13 ações essenciais</b> atendidas. '+(r.R.apto?'O RPPS reúne condições para a auditoria de certificação no '+NIVEIS_PG[r.R.alvo]+'.':'Permanecem pendências a sanear antes da auditoria de certificação.')+'</p>';
  html+='<h2>3. Esforço por tipo de atividade</h2><table><tr><th>Tipo</th><th style="width:20%">Quantidade</th></tr>'+Object.entries(porTipo).map(([t,q])=>'<tr><td>'+tipoAtivNome(t)+'</td><td>'+q+'</td></tr>').join('')+'</table>';
  html+='<h2>4. Evolução das ações do Pró-Gestão</h2><table><tr><th>Dimensão</th><th>Ações</th><th>Conformes</th><th>Pendentes</th></tr>'+dimRows+'</table>';
  if(r.R.pendEss.length) html+='<p><b>Ações essenciais ainda pendentes:</b> '+r.R.pendEss.join(', ')+'.</p>';
@@ -2371,7 +2415,53 @@ function htmlResultadoEnq(nivAtual){
     +'</div>';
  }
  return '<div class="card"><h3 class="serif" style="color:var(--ink);font-size:16px;margin-bottom:6px">3 · Enquadramento por nível de certificação ('+(S.enq.resolucao==='4963'?'Res. 4.963/2021':'Res. 5.272/2025')+')</h3>'
-  +cards+narr+det+globHtml+'</div>'+metaBox;
+  +cards+narr+det+globHtml+'</div>'+htmlAnaliseNivel()+metaBox;
+}
+
+/* ===== Análise de viabilidade do nível (pelos investimentos) ===== */
+function analiseNivel(){
+  const R=resumoGeral();
+  const pt=patrim();
+  const temCarteira = pt>0 && S.enq && ((S.enq.dair&&S.enq.dair.baseLimites>0) || (S.enq.itens&&S.enq.itens.length));
+  const enq={}; for(let L=1;L<=4;L++){ try{ enq[L]=calcEnq(L); }catch(e){ enq[L]={pctEnq:0,excVal:0}; } }
+  let nInvest=null, nQuase=null;
+  for(let L=1;L<=4;L++){ const p=enq[L].pctEnq; if(nQuase===null && p>=90) nQuase=L; if(nInvest===null && p>=99.95){ nInvest=L; break; } }
+  let recomendado, motivo;
+  if(!temCarteira){
+    recomendado = R.nivelAtingido || 2;
+    motivo = 'Sem carteira analisada. A recomendação considera só a governança: '+(R.nivelAtingido?('hoje o RPPS atinge o <b>'+NIVEIS_PG[R.nivelAtingido]+'</b>.'):('o RPPS ainda não atinge nenhum nível.'))+' Importe o DAIR ou lance a carteira para a análise pelos investimentos.';
+  } else if(nInvest===null){
+    recomendado = 4;
+    motivo = 'A carteira excede os limites da Resolução CMN mesmo no <b>Nível IV</b> (excesso de R$ '+fmtBRL(enq[4].excVal)+'). É preciso reduzir as posições fora do limite — ou tratá-las como desenquadramento passivo (art. 27) — além de buscar o Nível IV.';
+  } else {
+    recomendado = nInvest;
+    const govOk = R.aptoPorNivel[nInvest];
+    motivo = 'Pelos investimentos, o menor nível que enquadra integralmente a carteira é o <b>'+NIVEIS_PG[nInvest]+'</b> ('+enq[nInvest].pctEnq.toFixed(0)+'%). ';
+    if(nQuase && nQuase<nInvest){ motivo += 'O '+NIVEIS_PG[nQuase]+' já enquadra '+enq[nQuase].pctEnq.toFixed(0)+'% (residual de R$ '+fmtBRL(enq[nQuase].excVal)+', tratável como desenquadramento passivo — art. 27 — se preexistente à certificação). '; }
+    motivo += govOk ? 'Em governança, o RPPS já reúne o mínimo de ações para esse nível.' : ('Em governança, faltam <b>'+Math.max(0,MIN_ACOES[nInvest]-R.conf)+' ação(ões)</b> conformes para o '+NIVEIS_PG[nInvest]+' (mínimo '+MIN_ACOES[nInvest]+')'+(R.pendEss.length?' e há essenciais pendentes':'')+'.');
+  }
+  return {R,enq,temCarteira,nInvest,nQuase,recomendado,motivo,pt};
+}
+function htmlAnaliseNivel(){
+  const a=analiseNivel(), R=a.R;
+  if(!a.temCarteira) return '';
+  const rec=a.recomendado;
+  const linhas=[1,2,3,4].map(L=>{
+    const p=a.enq[L].pctEnq, exc=a.enq[L].excVal, invOk=p>=99.95, invQuase=p>=90, govOk=R.aptoPorNivel[L];
+    const falta=Math.max(0,MIN_ACOES[L]-R.conf);
+    const inv = invOk?'<span class="badge pill p-conforme">'+p.toFixed(0)+'%</span>':(invQuase?'<span class="badge pill" style="background:#FFF6E5;color:#B26A00">'+p.toFixed(0)+'%</span>':'<span class="badge pill p-nao">'+p.toFixed(0)+'%</span>');
+    const gov = govOk?'<span class="badge pill p-conforme">'+R.conf+'/'+MIN_ACOES[L]+'</span>':'<span class="badge pill p-pend">'+R.conf+'/'+MIN_ACOES[L]+'</span>';
+    const sit = (invOk&&govOk)?'Pronto p/ certificar':(!invOk?'Carteira excede':('Faltam '+falta+' ação(ões)'));
+    return '<tr'+(L===rec?' style="background:#FDFBF3"':'')+'><td><b>'+NIVEIS_PG[L]+'</b>'+(L===rec?' &#9733;':'')+'</td><td>'+inv+'</td><td>'+gov+'</td><td>'+(exc>0?'R$ '+fmtBRL(exc):'—')+'</td><td style="font-size:12px">'+sit+'</td></tr>';
+  }).join('');
+  const jaAlvo = R.alvo===rec;
+  return '<div class="card" style="border-left:4px solid var(--ouro)">'
+    +'<h3 class="serif" style="color:var(--ink);font-size:16px;margin-bottom:6px">Análise de viabilidade do nível — qual mirar agora</h3>'
+    +'<div style="background:var(--azul-claro);border:1px solid #CBD9EE;border-radius:8px;padding:10px 12px;font-size:13.5px;color:#28456F;margin-bottom:12px"><b>Recomendação: '+NIVEIS_PG[rec]+'.</b> '+a.motivo
+    +(jaAlvo?' <b>(nível já selecionado)</b>':' <button class="btn primario" style="padding:4px 10px;font-size:12px;margin-left:6px" onclick="setNivelAlvo('+rec+')">Adotar '+NIVEIS_PG[rec]+'</button>')+'</div>'
+    +'<table class="tab-niv"><tr><th>Nível</th><th>Carteira enquadrada</th><th>Ações (conf./mín.)</th><th>Excesso</th><th>Situação</th></tr>'+linhas+'</table>'
+    +'<p style="font-size:11.5px;color:var(--suave);margin-top:8px">A carteira fixa um <b>piso</b>: é preciso pelo menos o nível em que ela fica enquadrada para manter as posições sem desinvestir. A coluna de ações reflete a autoavaliação nas 24 ações. Níveis <b>III/IV</b> exigem ainda estrutura organizacional mais robusta e supervisão presencial — pondere o porte do RPPS.</p>'
+    +'</div>';
 }
 
 /* ===== Parser POSICIONAL do DAIR ===== */
