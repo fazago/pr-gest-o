@@ -2223,38 +2223,34 @@ function parseDAIRCarteira(items, opts) {
     return { str: it.str, x: it.x, w: it.w || 0, y: (it.page || 0) * 1e6 + it.y };
   });
 
-  // Apenas itens da área de valores (numéricos OU "R$"), à direita da página.
-  var val = items.filter(function (it) {
-    var right = it.x + (it.w || 0);
-    if (right < VAL_X_MIN) return false;
-    return it.str === 'R$' || numBR(it.str) !== null;
-  });
-  if (val.length < 6) { out.avisos.push('Área de valores não localizada.'); return out; }
-
-  // Mescla "R$" + número numa mesma "célula" (pdf.js às vezes separa, às vezes não).
+  // Monta "células" numéricas (mescla "R$" + número; pdf.js às vezes separa).
+  var rss = items.filter(function (it) { return it.str === 'R$'; });
   var cells = [];
-  var nums = val.filter(function (it) { return numBR(it.str) !== null; });
-  var rss = val.filter(function (it) { return it.str === 'R$'; });
-  nums.forEach(function (n) {
-    var hasRS = /R\$/.test(n.str) || rss.some(function (r) {
-      return Math.abs(r.y - n.y) <= Y_TOL && r.x < n.x && (n.x - (r.x + (r.w || 0))) < 14;
+  items.forEach(function (it) {
+    var v = numBR(it.str);
+    if (v === null) return;
+    var hasRS = /R\$/.test(it.str) || rss.some(function (r) {
+      return Math.abs(r.y - it.y) <= Y_TOL && r.x < it.x && (it.x - (r.x + (r.w || 0))) < 14;
     });
-    cells.push({ y: n.y, right: n.x + (n.w || 0), val: numBR(n.str), rs: hasRS });
+    cells.push({ y: it.y, right: it.x + (it.w || 0), val: v, rs: hasRS });
   });
+  if (cells.length < 6) { out.avisos.push('Poucos valores numéricos.'); return out; }
 
-  // Detecta as duas colunas de valor (COL_A = qtd/cota/total ; COL_B = %/PL) pela
-  // borda direita. COL_A é a de MENOR x; COL_B a de MAIOR x.
-  var clusters = cluster1d(cells.map(function (c) { return c.right; }), 25);
+  // Colunas de valor = os DOIS agrupamentos de borda-direita MAIS À DIREITA e densos.
+  // COL_A (qtd/cota/total) fica à esquerda da COL_B (PL/%). Independe de escala.
+  var clusters = cluster1d(cells.map(function (c) { return c.right; }), 20)
+                   .filter(function (c) { return c.n >= 4; })
+                   .sort(function (a, b) { return a.center - b.center; });
   if (!clusters.length) { out.avisos.push('Colunas de valor não detectadas.'); return out; }
-  clusters.sort(function (a, b) { return b.n - a.n; });          // pega as 2 mais densas
-  var top2 = clusters.slice(0, 2).sort(function (a, b) { return a.center - b.center; });
-  var colA = top2[0];
-  var inColA = function (c) { return Math.abs(c.right - colA.center) <= 14; };
-
+  var colA = clusters.length >= 2 ? clusters[clusters.length - 2] : clusters[clusters.length - 1];
+  var inColA = function (c) { return Math.abs(c.right - colA.center) <= 16; };
   var colACells = cells.filter(inColA).sort(function (a, b) { return a.y - b.y; });
 
   // Cada QUANTIDADE (valor da COL_A SEM R$) inicia um novo ativo.
   var qtys = colACells.filter(function (c) { return !c.rs; });
+  out.debug = { nCells: cells.length, nClusters: clusters.length,
+                colACenter: colA.center, colBCenter: clusters[clusters.length - 1].center,
+                nColA: colACells.length, nQtys: qtys.length };
   if (!qtys.length) { out.avisos.push('Quantidades (linha-base de ativo) não encontradas.'); return out; }
 
   var arts = items.filter(function (it) { return /^Art\.?$/.test(it.str); });
@@ -2276,12 +2272,13 @@ function parseDAIRCarteira(items, opts) {
         var m = lineStr.match(/Art\.?\s*(\d+)[°ºo]?(?:\s*,?\s*([IVX]+))?/);
         if (m) {
           sub = 'Art. ' + m[1] + (m[2] ? ', ' + m[2] : '');
-          // limite OFICIAL: coluna "LIMITE DA RESOLUÇÃO CMN %" (x0~202), linha mais
-          // próxima do "Art." (em alguns tipos o limite fica 1 sub-linha acima).
-          var best = null, bestd = 7;
+          // limite OFICIAL: número <=100 na coluna "LIMITE DA RESOLUÇÃO CMN %",
+          // que fica à ESQUERDA da COL_A e perto da linha do "Art." (às vezes 1
+          // sub-linha acima). Detecção relativa — independe de coordenada fixa.
+          var best = null, bestd = 7, limMaxX = colA.center - 60;
           for (var z = 0; z < items.length; z++) {
             var it2 = items[z];
-            if (it2.x >= 196 && it2.x <= 213) {
+            if (it2.x > arts[a].x && it2.x < limMaxX) {
               var d = Math.abs(it2.y - arts[a].y);
               if (d <= bestd) { var lv = numBR(it2.str); if (lv != null && lv <= 100) { best = lv; bestd = d; } }
             }
@@ -2352,10 +2349,11 @@ async function extrairItensPDF(blob){
     const tc = await pg.getTextContent();
     for(const it of tc.items){
       if(!it.str || !it.transform) continue;
+      // posição do glifo em coordenadas de leitura (viewport já trata a rotação).
+      // largura = avanço do texto (it.width), que após a rotação é a extensão
+      // horizontal visível — NÃO usar applyTransform([width,0]) (daria ~0 a 90°).
       const M = U.transform(vp.transform, it.transform);
-      const a = U.applyTransform([0,0], M);
-      const b = U.applyTransform([it.width||0,0], M);
-      items.push({ str:it.str, x:Math.min(a[0],b[0]), w:Math.abs(b[0]-a[0]), y:Math.min(a[1],b[1]), page:p });
+      items.push({ str:it.str, x:M[4], y:M[5], w:(it.width||0), page:p });
     }
   }
   return {items};
@@ -2419,18 +2417,28 @@ async function anexarCarteira(){
   S.enq.fonte='lendo...'; S.enq.dair=null; render();
   try{
    const ehPDF = /pdf/i.test(file.type||'') || /\.pdf$/i.test(file.name||'');
-   let usouDAIR=false;
+   let usouDAIR=false, r=null, ehDAIR=false;
    if(ehPDF){
     // 1) parser POSICIONAL do DAIR (preciso e autoconferível contra o total declarado)
     try{
      const {items}=await extrairItensPDF(file);
-     const r=parseDAIRCarteira(items);
+     const flat=items.map(it=>it.str).join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+     ehDAIR=/CARTEIRA DE INVESTIMENTOS|COMPUTO DOS LIMITES|DEMONSTRATIVO DE APLICACOES/i.test(flat);
+     r=parseDAIRCarteira(items);
+     window.__dairDiag={ok:r.ok,conferido:r.conferido,nAtivos:r.ativos.length,base:r.baseLimites,totalOficial:r.totalOficial,avisos:r.avisos,debug:r.debug,ehDAIR};
+     console.log('[DAIR] diagnóstico da leitura:', window.__dairDiag);
      if(r.ok && r.ativos.length){
       S.enq.dair=r; S.enq.itens=itensDoDAIR(r); S.enq.patrimonio=r.baseLimites; S.enq.ocr=false; usouDAIR=true;
      }
-    }catch(e){ /* sem êxito: segue para o heurístico */ }
+    }catch(e){ console.warn('[DAIR] falha no parser posicional:', e); }
    }
    if(!usouDAIR){
+    if(ehDAIR){
+     // É um DAIR, mas a leitura posicional não reconciliou: não despejar lixo do heurístico.
+     S.enq.itens=[]; S.enq.dair=null; S.enq.fonte=file.name; salvar(); render();
+     alert('Reconheci que é um DAIR, mas a leitura automática da carteira não bateu com o total declarado neste navegador. Para eu ajustar, abra o console (F12) e me envie o objeto "[DAIR] diagnóstico da leitura". Você pode lançar os valores manualmente enquanto isso.');
+     return;
+    }
     // 2) fallback: leitura por texto + heurística (outros layouts / PDF imagem/OCR)
     const {txt,ocr}=await extrairTexto(file,file.name);
     const itens=parseCarteira(txt);
