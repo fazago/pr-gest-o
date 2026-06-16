@@ -911,7 +911,12 @@ function vConfig(el){
   const c=S.config;
   el.innerHTML = `
   <div class="topo"><div><h2>Configurações do RPPS</h2><div class="sub">Estes dados preenchem automaticamente os modelos de documentos e ajustam os critérios condicionais de conformidade.</div></div></div>
-  <div class="card"><div class="grid c2">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <div style="font-size:13.5px;color:var(--suave)">Preencha manualmente ou <b>importe direto do DAIR</b> (ente, unidade gestora, responsável e se a carteira supera R$ 50 mi).</div>
+      <button class="btn primario" onclick="importarDAIRCadastro()">&#128196; Importar dados do DAIR (PDF)</button>
+    </div>
+    <div class="grid c2">
     <div><label class="sec-title">Unidade gestora do RPPS</label><input style="width:100%" value="${esc(c.rpps)}" onchange="cfg('rpps',this.value)" placeholder="Ex.: Instituto de Previdência dos Servidores de ..."></div>
     <div><label class="sec-title">Ente federativo</label><input style="width:100%" value="${esc(c.ente)}" onchange="cfg('ente',this.value)" placeholder="Ex.: Município de Bebedouro"></div>
     <div><label class="sec-title">UF</label><input style="width:100%" maxlength="2" value="${esc(c.uf)}" onchange="cfg('uf',this.value.toUpperCase())"></div>
@@ -2442,6 +2447,90 @@ function htmlDiagDAIR(d){
  return '<div class="card" style="border-left:4px solid var(--vinho)"><h3 class="serif" style="color:var(--ink);font-size:15px;margin:0 0 4px">Diagnóstico da leitura automática</h3>'
   +'<p style="font-size:12px;color:var(--suave);margin:0 0 6px">A leitura não reconciliou com o total do DAIR. <b>Envie um print desta caixa</b> que eu calibro. Enquanto isso, lance os valores manualmente.</p>'
   +'<pre style="white-space:pre-wrap;word-break:break-word;font-size:11.5px;background:#FBFBFD;border:1px solid var(--borda);border-radius:6px;padding:8px;margin:0;color:var(--ink)">'+esc(JSON.stringify(d,null,1))+'</pre></div>';
+}
+
+/* ===== Cadastro/governança do DAIR (pré-preenche Configurações) ===== */
+// palavras que iniciam outro rótulo no formulário do DAIR (delimitam o valor)
+var STOP_CAD = /^(Nome|CNPJ|UF|Endereço|Endereco|Bairro|Complemento|CEP|Telefone|Ramal|E-mail|Email|Cargo|CPF|Tipo|Data|Início|Inicio|Fim|Natureza|Página|Pagina|Descrição|Descricao|Observação|Observacao|Atribuição|Atribuicao|Órgão|Orgao|Ato|Vínculo|Vinculo|Validade|Entidade|Dispositivo|Número|Numero|Posição|Posicao|Finalidade|Justificativa|Motivo|Composição|Composicao|Fundamento|Identificação|Identificacao|Retificação|Retificacao)\b/i;
+function _linhasDAIR(items){
+  var by = {};
+  (items||[]).forEach(function(it){ var k=it.page+'|'+Math.round(it.y); (by[k]=by[k]||[]).push(it); });
+  return Object.keys(by).map(function(k){
+    var toks = by[k].slice().sort(function(a,b){return a.x-b.x;});
+    return { page: toks[0].page, y: toks[0].y, s: toks.map(function(t){return t.str;}).join(' ') };
+  });
+}
+function _valor(linhas, page, labelRe){
+  var ls = linhas.filter(function(l){return l.page===page;}).sort(function(a,b){return a.y-b.y;});
+  for (var i=0;i<ls.length;i++){
+    var m = ls[i].s.match(labelRe);
+    if (m){
+      var rest = ls[i].s.slice(m.index + m[0].length).trim();
+      if (rest){
+        var parts = rest.split(/\s+/), out = [];
+        for (var j=0;j<parts.length;j++){
+          var w=parts[j]; if(!w) continue;
+          if (/:$/.test(w) || STOP_CAD.test(w)) break;
+          if (/^\d{2}\/\d{2}\/\d{4}$/.test(w)) break;          // data
+          if (/^\d{2}[.\/]\d{3}[.\/]?\d*/.test(w)) break;       // CNPJ/CPF
+          if (/^\d{5,}$/.test(w)) break;                        // CEP/telefone/nº longo
+          out.push(w);
+        }
+        if (out.length) return out.join(' ').trim();
+      }
+    }
+  }
+  return '';
+}
+function parseDAIRCadastro(items){
+  var L = _linhasDAIR(items);
+  var flat = (items||[]).map(function(it){return it.str;}).join(' ');
+  function cnpjPag(p){
+    var ls=L.filter(function(l){return l.page===p;}).sort(function(a,b){return a.y-b.y;});
+    for(var i=0;i<ls.length;i++){ var m=ls[i].s.match(/(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/); if(m) return m[1]; }
+    return '';
+  }
+  return {
+    ente:    _valor(L, 1, /Nome:/),
+    uf:      (_valor(L, 1, /\bUF:/)||'').slice(0,2).toUpperCase(),
+    cnpjEnte: cnpjPag(1),
+    rpps:    _valor(L, 2, /Raz[aã]o\s+Social:/),
+    cnpjUG:  cnpjPag(2),
+    resp:    _valor(L, 2, /Nome:/),
+    cargo:   _valor(L, 2, /Cargo:/),
+    posicao: (flat.match(/Posi[çc][aã]o[\s\S]{0,60}?(\d{2}\/\d{2}\/\d{4})/)||[])[1] || '',
+    nivel:   (flat.match(/Sem\s+N[íi]vel/i) ? 'Sem Nível'
+              : (flat.match(/N[íi]vel\s+(IV|III|II|I)\b/) ? 'Nível '+RegExp.$1 : ''))
+  };
+}
+async function importarDAIRCadastro(){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='.pdf';
+  inp.onchange=async ()=>{
+    const file=inp.files[0]; if(!file) return;
+    try{
+      const meta=await extrairItensPDF(file); const items=meta.items;
+      const c=parseDAIRCadastro(items);
+      let cart=null; try{ cart=parseDAIRCarteira(items); }catch(e){}
+      const set=(k,v)=>{ if(v && String(v).trim()) S.config[k]=String(v).trim(); };
+      const aplic=[];
+      if(c.ente){ set('ente',c.ente); aplic.push('Ente: '+c.ente); }
+      if(c.uf){ set('uf',c.uf); aplic.push('UF: '+c.uf); }
+      if(c.rpps){ set('rpps',c.rpps); aplic.push('Unidade gestora: '+c.rpps); }
+      if(c.resp){ set('resp',c.resp); aplic.push('Responsável (gestor): '+c.resp); }
+      if(c.cargo){ set('cargo',c.cargo); aplic.push('Cargo: '+c.cargo); }
+      if(cart && cart.baseLimites>0){
+        const v=cart.baseLimites>50000000?'sim':'nao'; S.config.carteira50=v;
+        aplic.push('Recursos > R$ 50 mi: '+(v==='sim'?'Sim — ALM obrigatório (ação 2.6)':'Não')+'  (base R$ '+fmtBRL(cart.baseLimites)+')');
+      }
+      salvar(); render();
+      if(aplic.length){
+        alert('Dados importados do DAIR e preenchidos nas Configurações:\n\n• '+aplic.join('\n• ')+'\n\nConfira e ajuste se necessário.\nObs.: a governança detalhada (membros de conselhos/comitê, credenciamento) não é preenchida — apenas o cadastro essencial que os documentos utilizam.');
+      } else {
+        alert('Não consegui extrair os dados de cadastro deste arquivo. Verifique se é um DAIR do CADPREV (PDF) e preencha manualmente.');
+      }
+    }catch(e){ alert('Falha ao ler o PDF: '+(e&&e.message||e)); }
+  };
+  inp.click();
 }
 
 /* leitura do PDF da carteira */
