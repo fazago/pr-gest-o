@@ -2266,8 +2266,6 @@ function parseDAIROnce(items, opts) {
                 nColA: colACells.length, nQtys: qtys.length };
   if (!qtys.length) { out.avisos.push('Quantidades (linha-base de ativo) não encontradas.'); return out; }
 
-  var arts = items.filter(function (it) { return /^Art\.?$/.test(it.str); });
-
   for (var i = 0; i < qtys.length; i++) {
     var lo = qtys[i].y;
     var hi = (i + 1 < qtys.length) ? qtys[i + 1].y : Infinity;
@@ -2275,36 +2273,23 @@ function parseDAIROnce(items, opts) {
     var rsHere = colACells.filter(function (c) { return c.rs && c.y > lo && c.y < hi; });
     var total = rsHere.length ? rsHere[rsHere.length - 1].val : 0;
 
-    // Subclasse + limite OFICIAL declarado no próprio DAIR
+    // Texto da CÉLULA DE TIPO do ativo: tudo na faixa vertical do ativo e à
+    // ESQUERDA das colunas de valor. Concatenado em ordem de leitura — assim a
+    // referência "Art. N° ROMANO" é encontrada independentemente de como o
+    // extrator (pdf.js, pdfplumber, ...) fatia o texto em pedaços.
+    var hiTxt = (hi === Infinity) ? (lo + 60) : (hi - 8);
+    var txt = items.filter(function (it) {
+      return it.y > lo - 6 && it.y < hiTxt && it.x < (colA.center - 80);
+    }).sort(function (p, q) { return (p.y - q.y) || (p.x - q.x); })
+      .map(function (it) { return it.str; }).join(' ');
+
     var sub = null, subLim = null;
-    for (var a = 0; a < arts.length; a++) {
-      if (arts[a].y >= lo - Y_TOL && arts[a].y < hi) {
-        var lineStr = items.filter(function (it) {
-          return Math.abs(it.y - arts[a].y) <= Y_TOL && it.x >= arts[a].x;
-        }).sort(function (p, q) { return p.x - q.x; }).map(function (it) { return it.str; }).join(' ');
-        var m = lineStr.match(/Art\.?\s*(\d+)[°ºo]?(?:\s*,?\s*([IVX]+))?/);
-        if (m) {
-          sub = 'Art. ' + m[1] + (m[2] ? ', ' + m[2] : '');
-          // limite OFICIAL: número <=100 na coluna "LIMITE DA RESOLUÇÃO CMN %",
-          // que fica à ESQUERDA da COL_A e perto da linha do "Art." (às vezes 1
-          // sub-linha acima). Detecção relativa — independe de coordenada fixa.
-          var best = null, bestd = 7, limMaxX = colA.center - 60;
-          for (var z = 0; z < items.length; z++) {
-            var it2 = items[z];
-            if (it2.x > arts[a].x && it2.x < limMaxX) {
-              var d = Math.abs(it2.y - arts[a].y);
-              if (d <= bestd) { var lv = numBR(it2.str); if (lv != null && lv <= 100) { best = lv; bestd = d; } }
-            }
-          }
-          if (best == null) {   // fallback: 1º número após o romano na mesma linha
-            var after = lineStr.slice(lineStr.indexOf(m[0]) + m[0].length);
-            var lm = after.match(/(\d{1,3}(?:[.,]\d+)?)/);
-            if (lm) { var lv2 = numBR(lm[1]); if (lv2 != null && lv2 <= 100) best = lv2; }
-          }
-          subLim = best;
-        }
-        break;
-      }
+    var m = txt.match(/Art\.?\s*(\d+)[°ºo]?(?:\s*,?\s*([IVX]+))?/);
+    if (m) {
+      sub = 'Art. ' + m[1] + (m[2] ? ', ' + m[2] : '');
+      // limite OFICIAL: número no formato da coluna "LIMITE %" (ex.: "100,00", "20,00")
+      var lm = txt.match(/\b(\d{1,3},\d{2})\b/);
+      if (lm) { var lv = numBR(lm[1]); if (lv != null && lv <= 100) subLim = lv; }
     }
     var segmento = sub ? (ART_SEGMENTO[sub.match(/\d+/)[0]] || 'Outros') : 'Disponibilidades Financeiras';
     out.ativos.push({ segmento: segmento, subclasse: sub, valorTotal: total, quantidade: qtys[i].val, limiteDAIR: subLim });
@@ -2315,6 +2300,7 @@ function parseDAIROnce(items, opts) {
     out.totalGeral += at.valorTotal;
     if (!at.subclasse) { out.disponibilidades += at.valorTotal; return; }
     out.baseLimites += at.valorTotal;
+    if (at.valorTotal <= 0.005) return;   // não cria linha para subclasse de valor ~0
     var k = at.subclasse;
     if (!out.porSubclasse[k]) {
       out.porSubclasse[k] = { segmento: at.segmento, valor: 0, n: 0,
