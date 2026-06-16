@@ -2319,13 +2319,27 @@ function parseDAIROnce(items, opts) {
   });
 
   // Autoconferência: a base somada bate com o total declarado no próprio DAIR?
-  var flat = items.map(function (it) { return it.str; }).join(' ')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');   // remove acentos p/ casar "CÔMPUTO"
-  var mt = flat.match(/COMPUTO\s+DOS\s+LIMITES\s*:?\s*R?\$?\s*([\d.][\d.,]*)/i);
-  if (mt) {
-    var tv = numBR(mt[1]);
-    if (tv != null) { out.totalOficial = tv; out.conferido = Math.abs(tv - out.baseLimites) <= 1; }
+  // (a) padrão direto no texto; (b) posicional — acha o rótulo "CÔMPUTO DOS
+  // LIMITES" e pega o maior número na MESMA linha (robusto à ordem do pdf.js).
+  function semAcento(s){ return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+  var totDecl = null;
+  var flat = items.map(function (it) { return it.str; }).join(' ');
+  var flatN = semAcento(flat);
+  var mt = flatN.match(/COMPUTO\s+DOS\s+LIMITES[^\d]{0,40}(\d{1,3}(?:\.\d{3})*,\d{2})/i);
+  if (mt) totDecl = numBR(mt[1]);
+  if (totDecl == null) {
+    var lab = null;
+    for (var q = 0; q < items.length; q++) {
+      if (/COMPUTO/i.test(semAcento(items[q].str))) { lab = items[q]; break; }
+    }
+    if (lab) {
+      var near = items.filter(function (it) { return Math.abs(it.y - lab.y) <= 8 && numBR(it.str) != null; })
+                      .map(function (it) { return numBR(it.str); })
+                      .filter(function (v) { return v >= 1000; });
+      if (near.length) totDecl = Math.max.apply(null, near);
+    }
   }
+  if (totDecl != null) { out.totalOficial = totDecl; out.conferido = Math.abs(totDecl - out.baseLimites) <= 1; }
 
   out.ok = out.baseLimites > 0;
   return out;
@@ -2396,7 +2410,9 @@ function htmlPainelDAIR(r){
  if(!r) return '';
  var badge = r.conferido
   ? '<span style="background:#E6F4EA;color:#1E7E34;border:1px solid #BFE3C9;border-radius:12px;padding:3px 10px;font-size:12px;font-weight:600">&#10003; Soma confere com o total do DAIR (R$ '+fmtBRL(r.totalOficial)+')</span>'
-  : '<span style="background:#FDECEA;color:#B23329;border:1px solid #F5C6C0;border-radius:12px;padding:3px 10px;font-size:12px;font-weight:600">&#9888; Soma diverge do total declarado — confira</span>';
+  : (r.totalOficial!=null
+     ? '<span style="background:#FDECEA;color:#B23329;border:1px solid #F5C6C0;border-radius:12px;padding:3px 10px;font-size:12px;font-weight:600">&#9888; Soma (R$ '+fmtBRL(r.baseLimites)+') diverge do total declarado (R$ '+fmtBRL(r.totalOficial)+') — confira</span>'
+     : '<span style="background:#FFF6E5;color:#B26A00;border:1px solid #F2D9A8;border-radius:12px;padding:3px 10px;font-size:12px;font-weight:600">&#9888; Não localizei o total declarado para conferência automática — confira os valores</span>');
  var linhas = Object.keys(r.porSubclasse).sort().map(function(k){
   var s=r.porSubclasse[k], cor='#1E7E34', sit='enquadrado';
   if(s.excedente>0){ cor='#B23329'; sit='excesso de R$ '+fmtBRL(s.excedente); }
@@ -2446,7 +2462,7 @@ async function anexarCarteira(){
      r=parseDAIRCarteira(items);
      diag=dairDiag(items,meta,r); window.__dairDiag=diag;
      console.log('[DAIR] diagnóstico da leitura:', diag);
-     if(r.ok && r.ativos.length && r.conferido){
+     if(r.ok && r.ativos.length){
       S.enq.dair=r; S.enq.itens=itensDoDAIR(r); S.enq.patrimonio=r.baseLimites; S.enq.ocr=false; usouDAIR=true;
      }
     }catch(e){ console.warn('[DAIR] falha no parser posicional:', e); }
