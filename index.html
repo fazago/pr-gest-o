@@ -2056,6 +2056,7 @@ function vEnq(el){
 
   // painel autoritativo do DAIR (preenchido pela leitura automática)
   +(E.dair? htmlPainelDAIR(E.dair):'')
+  +((!E.dair && E.dairDiag)? htmlDiagDAIR(E.dairDiag):'')
 
   // bloco 2: configuração da análise
   +'<div class="card"><h3 class="serif" style="color:var(--ink);font-size:16px;margin-bottom:8px">2 · Parâmetros</h3><div class="grid c3">'
@@ -2206,7 +2207,19 @@ function cluster1d(vals, minGap) {
   });
 }
 
+/* Envoltório: tenta a leitura como está; se a soma não reconciliar com o total
+   declarado no DAIR, tenta a orientação vertical invertida (alguns extratores
+   entregam y para cima). Só aceita automaticamente uma orientação que CONFERE. */
 function parseDAIRCarteira(items, opts) {
+  var r = parseDAIROnce(items, opts);
+  if (r.conferido) return r;
+  var flip = (items || []).map(function (it) { return { str: it.str, x: it.x, y: -it.y, w: it.w, page: it.page }; });
+  var r2 = parseDAIROnce(flip, opts);
+  if (r2.conferido) return r2;
+  return (r2.baseLimites > r.baseLimites) ? r2 : r;
+}
+
+function parseDAIROnce(items, opts) {
   opts = opts || {};
   var Y_TOL = opts.yTol || 2.2;        // tolerância vertical p/ "mesma linha"
   var VAL_X_MIN = opts.valXMin || 600; // valores da carteira ficam à direita
@@ -2343,8 +2356,10 @@ async function extrairItensPDF(blob){
   const U = pdfjsLib.Util;
   const items=[];
   const n = Math.min(pdf.numPages, 200);   // DAIR tem ~66 pág.; a carteira fica no fim
+  let rot=null;
   for(let p=1;p<=n;p++){
     const pg = await pdf.getPage(p);
+    if(rot===null) rot=pg.rotate||0;
     const vp = pg.getViewport({scale:1, rotation:(pg.rotate||0)});
     const tc = await pg.getTextContent();
     for(const it of tc.items){
@@ -2356,7 +2371,7 @@ async function extrairItensPDF(blob){
       items.push({ str:it.str, x:M[4], y:M[5], w:(it.width||0), page:p });
     }
   }
-  return {items};
+  return {items, numPages:pdf.numPages, rotate:rot};
 }
 
 /* mapeamento subclasse CMN -> cod do segmento do sistema (palpite editável).
@@ -2409,34 +2424,51 @@ function htmlPainelDAIR(r){
   +'</div>';
 }
 
+/* diagnóstico legível da leitura (para print quando a leitura automática falha) */
+function dairDiag(items, meta, r){
+ var num=(items||[]).filter(function(it){return numBR(it.str)!==null;});
+ function rng(arr,f){if(!arr.length)return[0,0];var a=arr.map(f);return[Math.round(Math.min.apply(null,a)),Math.round(Math.max.apply(null,a))];}
+ var cl=cluster1d(num.map(function(it){return it.x+(it.w||0);}),20).filter(function(c){return c.n>=3;})
+        .sort(function(a,b){return b.center-a.center;}).slice(0,6).map(function(c){return Math.round(c.center)+'×'+c.n;});
+ return { paginas:meta&&meta.numPages, rotacao:meta&&meta.rotate, itens:(items||[]).length, numericos:num.length,
+  x:rng(num,function(it){return it.x;}), y:rng(num,function(it){return it.y;}), w:rng(num,function(it){return it.w||0;}),
+  bordasDireitas:cl,
+  parser:r?{ok:r.ok,conferido:r.conferido,ativos:r.ativos.length,base:Math.round(r.baseLimites),totalOficial:r.totalOficial?Math.round(r.totalOficial):null,debug:r.debug,avisos:r.avisos}:null };
+}
+function htmlDiagDAIR(d){
+ if(!d) return '';
+ return '<div class="card" style="border-left:4px solid var(--vinho)"><h3 class="serif" style="color:var(--ink);font-size:15px;margin:0 0 4px">Diagnóstico da leitura automática</h3>'
+  +'<p style="font-size:12px;color:var(--suave);margin:0 0 6px">A leitura não reconciliou com o total do DAIR. <b>Envie um print desta caixa</b> que eu calibro. Enquanto isso, lance os valores manualmente.</p>'
+  +'<pre style="white-space:pre-wrap;word-break:break-word;font-size:11.5px;background:#FBFBFD;border:1px solid var(--borda);border-radius:6px;padding:8px;margin:0;color:var(--ink)">'+esc(JSON.stringify(d,null,1))+'</pre></div>';
+}
+
 /* leitura do PDF da carteira */
 async function anexarCarteira(){
  const inp=document.createElement('input'); inp.type='file'; inp.accept='.pdf,.jpg,.jpeg,.png';
  inp.onchange=async ()=>{
   const file=inp.files[0]; if(!file)return;
-  S.enq.fonte='lendo...'; S.enq.dair=null; render();
+  S.enq.fonte='lendo...'; S.enq.dair=null; S.enq.dairDiag=null; render();
   try{
    const ehPDF = /pdf/i.test(file.type||'') || /\.pdf$/i.test(file.name||'');
-   let usouDAIR=false, r=null, ehDAIR=false;
+   let usouDAIR=false, r=null, ehDAIR=false, diag=null;
    if(ehPDF){
     // 1) parser POSICIONAL do DAIR (preciso e autoconferível contra o total declarado)
     try{
-     const {items}=await extrairItensPDF(file);
+     const meta=await extrairItensPDF(file); const items=meta.items;
      const flat=items.map(it=>it.str).join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
      ehDAIR=/CARTEIRA DE INVESTIMENTOS|COMPUTO DOS LIMITES|DEMONSTRATIVO DE APLICACOES/i.test(flat);
      r=parseDAIRCarteira(items);
-     window.__dairDiag={ok:r.ok,conferido:r.conferido,nAtivos:r.ativos.length,base:r.baseLimites,totalOficial:r.totalOficial,avisos:r.avisos,debug:r.debug,ehDAIR};
-     console.log('[DAIR] diagnóstico da leitura:', window.__dairDiag);
-     if(r.ok && r.ativos.length){
+     diag=dairDiag(items,meta,r); window.__dairDiag=diag;
+     console.log('[DAIR] diagnóstico da leitura:', diag);
+     if(r.ok && r.ativos.length && r.conferido){
       S.enq.dair=r; S.enq.itens=itensDoDAIR(r); S.enq.patrimonio=r.baseLimites; S.enq.ocr=false; usouDAIR=true;
      }
     }catch(e){ console.warn('[DAIR] falha no parser posicional:', e); }
    }
    if(!usouDAIR){
     if(ehDAIR){
-     // É um DAIR, mas a leitura posicional não reconciliou: não despejar lixo do heurístico.
-     S.enq.itens=[]; S.enq.dair=null; S.enq.fonte=file.name; salvar(); render();
-     alert('Reconheci que é um DAIR, mas a leitura automática da carteira não bateu com o total declarado neste navegador. Para eu ajustar, abra o console (F12) e me envie o objeto "[DAIR] diagnóstico da leitura". Você pode lançar os valores manualmente enquanto isso.');
+     // É um DAIR, mas a leitura posicional não reconciliou: mostra diagnóstico, sem lixo.
+     S.enq.itens=[]; S.enq.dair=null; S.enq.dairDiag=diag; S.enq.fonte=file.name; salvar(); render();
      return;
     }
     // 2) fallback: leitura por texto + heurística (outros layouts / PDF imagem/OCR)
