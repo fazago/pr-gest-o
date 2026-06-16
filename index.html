@@ -40,6 +40,12 @@ aside{width:252px;flex-shrink:0;background:var(--ink);color:#E8ECF4;display:flex
 .selo-mini{width:46px;height:46px;border-radius:50%;border:2px solid var(--ouro);display:flex;align-items:center;justify-content:center;font-family:Georgia,serif;font-weight:700;color:var(--ouro);font-size:17px;letter-spacing:.5px;margin-bottom:10px;background:radial-gradient(circle at 30% 30%, rgba(201,162,39,.25), transparent 60%)}
 .brand h1{font-size:17px;color:#fff;line-height:1.25}
 .brand small{display:block;color:#9FB0CC;font-size:11.5px;margin-top:4px;letter-spacing:.04em;text-transform:uppercase}
+.cliente-box{padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035)}
+.cliente-box .cli-lbl{display:block;color:#9FB0CC;font-size:10px;letter-spacing:.07em;text-transform:uppercase;margin-bottom:5px}
+.cliente-box .cli-sel{width:100%;padding:7px 8px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:#13233f;color:#fff;font-size:13px}
+.cliente-box .cli-acts{display:flex;gap:6px;margin-top:7px}
+.cliente-box .cli-acts button{flex:1;padding:5px 4px;border-radius:6px;border:1px solid rgba(255,255,255,.18);background:transparent;color:#cdd9ec;font-size:11px;cursor:pointer}
+.cliente-box .cli-acts button:hover{background:rgba(255,255,255,.10)}
 nav{padding:12px 10px;flex:1;overflow-y:auto}
 nav button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:none;color:#C6D0E2;padding:10px 12px;border-radius:8px;font-size:14px;margin-bottom:2px}
 nav button .num{font-family:Georgia,serif;color:var(--ouro);width:18px;display:inline-block;font-size:13px}
@@ -237,6 +243,27 @@ footer.nota{color:var(--suave);font-size:12px;margin-top:30px;border-top:1px sol
   main{padding:18px 14px 50px}
   .req-item{grid-template-columns:1fr}
 }
+/* ---- Carteira de clientes (portfólio) ---- */
+.nav-portfolio{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;color:#E8ECF4;border:none;border-bottom:1px solid rgba(255,255,255,.12);padding:12px 20px;cursor:pointer;font-size:13.5px;font-weight:600}
+.nav-portfolio:hover{background:rgba(255,255,255,.06)}
+.nav-portfolio.ativo{background:var(--azul);color:#fff}
+.nav-portfolio .ic{color:var(--ouro);font-size:15px}
+.cli-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:6px}
+.cli-card{border:1px solid var(--borda);border-radius:12px;background:#fff;padding:16px 16px 14px;display:flex;flex-direction:column;box-shadow:0 1px 2px rgba(19,41,75,.04)}
+.cli-card.atual{border-color:var(--ouro);box-shadow:0 0 0 2px rgba(201,162,39,.25)}
+.cli-card h3{font-family:Georgia,serif;color:var(--ink);font-size:17px;line-height:1.25;margin:0 2px}
+.cli-card .uf{font-size:12px;color:var(--suave);margin:3px 2px 12px;min-height:15px}
+.cli-badge{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;margin-bottom:12px}
+.cli-badge.ok{background:var(--verde-bg);color:var(--verde)}
+.cli-badge.no{background:var(--vinho-bg);color:var(--vinho)}
+.cli-bar{height:7px;border-radius:5px;background:#EEF1F6;overflow:hidden;margin:0 2px 6px}
+.cli-bar > span{display:block;height:100%;border-radius:5px}
+.cli-metrics{display:flex;gap:14px;flex-wrap:wrap;margin:8px 2px 14px;font-size:12.5px;color:var(--suave)}
+.cli-metrics b{color:var(--ink);font-size:15px;font-weight:700;display:block;line-height:1.1}
+.cli-card .acoesbar{display:flex;gap:8px;margin-top:auto}
+.cli-card .acoesbar .btn{padding:7px 12px}
+.cli-novo{border:1.5px dashed var(--borda);border-radius:12px;background:#FBFCFE;display:flex;align-items:center;justify-content:center;min-height:150px;color:var(--azul);font-weight:600;cursor:pointer;font-size:14px}
+.cli-novo:hover{background:var(--azul-claro);border-color:var(--azul)}
 </style>
 </head>
 <body>
@@ -247,6 +274,7 @@ footer.nota{color:var(--suave);font-size:12px;margin-top:30px;border-top:1px sol
       <h1>Pró-Gestão RPPS</h1>
       <small>Implantação · Nível II · v4.0/2026</small>
     </div>
+    <div class="cliente-box" id="clienteBox"></div>
     <nav id="navMenu"></nav>
     <div class="nav-verdict" id="navVerdict"></div>
     <div class="rodape-side">Base: Manual do Pró-Gestão RPPS — Versão 4.0 (Portaria SRPC nº 236, DOU 04/02/2026) · art. 236 da Portaria MTP nº 1.467/2022</div>
@@ -623,22 +651,59 @@ const PLANO_PADRAO = [
 /* ================================================================
    ESTADO E PERSISTÊNCIA
    ================================================================ */
-const CHAVE = 'progestao_n2_v1';
-let S = {
-  config:{rpps:'', ente:'', uf:'SP', resp:'', cargo:'', carteira50:'nao', art280:'nao', dataAlvo:''},
-  req:{},      // status por requisito: 'pend'|'and'|'ok'|'nc'|'na'
-  docs:{},     // status por documento: 'pend'|'sol'|'rec'|'val'
-  meta:{},     // por ação: {resp,prazo,obs}
-  plano:null,  // linhas do plano de trabalho
-  vista:'painel', filtroDim:0, filtroSt:'todos'
-};
+const CHAVE = 'progestao_n2_v1';            // (legado: dados de cliente único, p/ migração)
+const CHAVE_REG = 'progestao_n2_clientes';  // registro de clientes
+const PREFIXO = 'progestao_n2_v1';          // chave por cliente = PREFIXO + '::' + id
+let CLIENTE_ATUAL = null;
+let REG = { atual:null, lista:[] };         // lista: [{id, nome}]
+function chaveCliente(id){ return PREFIXO + '::' + id; }
+function salvarRegistro(){ try{ localStorage.setItem(CHAVE_REG, JSON.stringify(REG)); }catch(e){} }
+
+function estadoInicial(){
+  return {
+    config:{rpps:'', ente:'', uf:'SP', resp:'', cargo:'', carteira50:'nao', art280:'nao', dataAlvo:''},
+    req:{},      // status por requisito: 'pend'|'and'|'ok'|'nc'|'na'
+    docs:{},     // status por documento: 'pend'|'sol'|'rec'|'val'
+    meta:{},     // por ação: {resp,prazo,obs}
+    plano:null,  // linhas do plano de trabalho
+    vista:'painel', filtroDim:0, filtroSt:'todos'
+  };
+}
+let S = estadoInicial();
+
+function carregarRegistro(){
+  try{ const x=localStorage.getItem(CHAVE_REG); if(x) REG=JSON.parse(x); }catch(e){}
+  if(!REG || typeof REG!=='object') REG={atual:null,lista:[]};
+  if(!Array.isArray(REG.lista)) REG.lista=[];
+  if(!REG.lista.length){
+    // primeira execução: migra dados antigos (cliente único) ou cria cliente vazio
+    const id='c'+Date.now();
+    const legado=localStorage.getItem(CHAVE);
+    let nome='Cliente 1';
+    if(legado){
+      try{ localStorage.setItem(chaveCliente(id), legado); }catch(e){}
+      try{ const o=JSON.parse(legado); nome=(o.config&&(o.config.ente||o.config.rpps))||nome; }catch(e){}
+      try{ localStorage.removeItem(CHAVE); }catch(e){}   // já migrado; evita duplicar
+    }
+    REG.lista.push({id, nome}); REG.atual=id; salvarRegistro();
+  }
+  if(!REG.atual || !REG.lista.some(c=>c.id===REG.atual)) REG.atual=REG.lista[0].id;
+  CLIENTE_ATUAL=REG.atual;
+}
+function syncNomeCliente(){
+  const e=REG.lista.find(c=>c.id===CLIENTE_ATUAL); if(!e) return;
+  const nm=(S.config&&(S.config.ente||S.config.rpps))||e.nome||'Cliente';
+  if(e.nome!==nm){ e.nome=nm; salvarRegistro(); }
+}
 
 function salvar(){
-  try{ localStorage.setItem(CHAVE, JSON.stringify(S)); }catch(e){ /* preview sem storage: usar Exportar backup */ }
+  try{ localStorage.setItem(chaveCliente(CLIENTE_ATUAL), JSON.stringify(S)); }catch(e){ /* preview sem storage: usar Exportar backup */ }
+  syncNomeCliente();
 }
 function carregar(){
+  S = estadoInicial();
   try{
-    const x = localStorage.getItem(CHAVE);
+    const x = localStorage.getItem(chaveCliente(CLIENTE_ATUAL));
     if(x){ const o = JSON.parse(x); S = Object.assign(S, o); }
   }catch(e){}
   if(!S.plano){ S.plano = PLANO_PADRAO.map((p,i)=>({id:i+1,f:p.f,t:p.t,resp:'',ini:'',fim:'',st:'pend'})); }
@@ -656,18 +721,82 @@ function carregar(){
   S.novaAtiv=S.novaAtiv||null;
   if(!S.enq) S.enq={resolucao:'5272',nivelSugerido:2,itens:[],patrimonio:'',metaAtuarial:'',dataPos:''};
 }
+function baixarJSON(obj, filename){
+  const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click();
+}
+function _safeNome(n){ return String(n||'cliente').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'_').slice(0,40)||'cliente'; }
 function exportar(){
-  const blob = new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'progestao_nivel2_backup_'+new Date().toISOString().slice(0,10)+'.json';
-  a.click();
+  const nome=(REG.lista.find(c=>c.id===CLIENTE_ATUAL)||{}).nome||'cliente';
+  baixarJSON({tipo:'progestao-cliente', nome, estado:S}, 'progestao_'+_safeNome(nome)+'_'+new Date().toISOString().slice(0,10)+'.json');
+}
+function exportarTodos(){
+  const clientes=REG.lista.map(c=>{ let est=null; try{ est=JSON.parse(localStorage.getItem(chaveCliente(c.id))||'null'); }catch(e){} return {id:c.id, nome:c.nome, estado:est}; });
+  baixarJSON({tipo:'progestao-bundle', versao:1, clientes}, 'progestao_TODOS_clientes_'+new Date().toISOString().slice(0,10)+'.json');
 }
 function importar(ev){
   const f = ev.target.files[0]; if(!f) return;
   const r = new FileReader();
-  r.onload = ()=>{ try{ S = Object.assign(S, JSON.parse(r.result)); salvar(); render(); alert('Backup importado com sucesso.'); }catch(e){ alert('Arquivo inválido.'); } };
+  r.onload = ()=>{
+    let o; try{ o=JSON.parse(r.result); }catch(e){ alert('Arquivo inválido.'); return; }
+    try{
+      if(o && o.tipo==='progestao-bundle' && Array.isArray(o.clientes)){
+        if(!confirm('Restaurar backup de TODOS os clientes?\n\nIsto vai SUBSTITUIR os '+REG.lista.length+' cliente(s) atuais por '+o.clientes.length+' cliente(s) do arquivo. Não pode ser desfeito.')) return;
+        REG.lista.forEach(c=>{ try{ localStorage.removeItem(chaveCliente(c.id)); }catch(e){} });
+        REG={atual:null,lista:[]};
+        o.clientes.forEach(c=>{ const id=c.id||('c'+Date.now()+Math.floor(Math.random()*1e4)); if(c.estado){ try{ localStorage.setItem(chaveCliente(id), JSON.stringify(c.estado)); }catch(e){} } REG.lista.push({id, nome:c.nome||'Cliente'}); });
+        REG.atual=REG.lista.length?REG.lista[0].id:null; salvarRegistro(); location.reload(); return;
+      }
+      // backup de cliente único (novo {tipo:'progestao-cliente',estado} ou formato antigo = o próprio estado)
+      const est = (o && o.tipo==='progestao-cliente' && o.estado) ? o.estado : o;
+      if(!confirm('Importar este backup para o cliente ATUAL ('+esc((REG.lista.find(c=>c.id===CLIENTE_ATUAL)||{}).nome||'')+')?\nOs dados atuais deste cliente serão substituídos.')) return;
+      S = Object.assign(estadoInicial(), est); salvar(); render(); alert('Backup importado para o cliente atual.');
+    }catch(e){ alert('Falha ao importar: '+(e&&e.message||e)); }
+  };
   r.readAsText(f);
+}
+
+/* ---------- Multi-cliente: trocar / criar / renomear / excluir ---------- */
+function trocarCliente(id){
+  if(!id || id===CLIENTE_ATUAL){ render(); return; }
+  salvar();                                   // garante o cliente atual salvo
+  REG.atual=id; CLIENTE_ATUAL=id; salvarRegistro();
+  carregar();                                 // reseta S e carrega o novo cliente
+  render();
+}
+function novoCliente(){
+  const nome=prompt('Nome do novo cliente (ente / RPPS):','');
+  if(nome===null) return;
+  salvar();                                   // salva o atual antes de trocar
+  const id='c'+Date.now();
+  REG.lista.push({id, nome:(nome.trim()||'Novo cliente')});
+  REG.atual=id; CLIENTE_ATUAL=id; salvarRegistro();
+  carregar();                                 // estado novo já com todos os defaults
+  if(nome.trim()) S.config.ente=nome.trim();
+  salvar(); render();
+  alert('Cliente criado e selecionado. Vá em Configurações para completar o cadastro — ou use "Importar dados do DAIR".');
+}
+function renomearCliente(){
+  const e=REG.lista.find(c=>c.id===CLIENTE_ATUAL); if(!e) return;
+  const nome=prompt('Nome do cliente:', e.nome||'');
+  if(nome===null || !nome.trim()) return;
+  e.nome=nome.trim(); if(!S.config.ente) S.config.ente=nome.trim();
+  salvarRegistro(); salvar(); render();
+}
+async function excluirCliente(){
+  if(REG.lista.length<=1){ alert('Não é possível excluir o único cliente. Crie outro antes de excluir este.'); return; }
+  const e=REG.lista.find(c=>c.id===CLIENTE_ATUAL);
+  if(!confirm('Excluir o cliente "'+(e&&e.nome||'')+'" e TODOS os seus dados e anexos deste computador?\n\nEsta ação não pode ser desfeita. (Dica: faça um backup antes.)')) return;
+  // apaga anexos do IndexedDB deste cliente
+  try{
+    const ids=[];
+    Object.values(S.anexos||{}).forEach(l=>l.forEach(f=>{ if(f&&f.id) ids.push(f.id); }));
+    for(const id of ids){ try{ await dbDel(id); }catch(_){} }
+  }catch(_){}
+  try{ localStorage.removeItem(chaveCliente(CLIENTE_ATUAL)); }catch(_){}
+  REG.lista=REG.lista.filter(c=>c.id!==CLIENTE_ATUAL);
+  REG.atual=REG.lista[0].id; CLIENTE_ATUAL=REG.atual; salvarRegistro();
+  carregar(); render();
 }
 
 /* ================================================================
@@ -731,15 +860,86 @@ const VISTAS = [
 ];
 function render(){
   const nav = document.getElementById('navMenu');
-  nav.innerHTML = VISTAS.map(v=>'<button class="'+(S.vista===v[0]?'ativo':'')+'" onclick="irPara(\''+v[0]+'\')"><span class="num">'+v[2]+'</span>'+v[1]+'</button>').join('');
+  nav.innerHTML = '<button class="nav-portfolio'+(S.vista==='clientes'?' ativo':'')+'" onclick="irPara(\'clientes\')"><span class="ic">&#9638;</span>Carteira de clientes</button>'
+    + VISTAS.map(v=>'<button class="'+(S.vista===v[0]?'ativo':'')+'" onclick="irPara(\''+v[0]+'\')"><span class="num">'+v[2]+'</span>'+v[1]+'</button>').join('');
+  const cb = document.getElementById('clienteBox');
+  if(cb){
+    const opts = REG.lista.map(c=>'<option value="'+c.id+'"'+(c.id===CLIENTE_ATUAL?' selected':'')+'>'+esc(c.nome||'Cliente')+'</option>').join('');
+    cb.innerHTML = '<label class="cli-lbl">Cliente em edição</label>'
+      + '<select class="cli-sel" onchange="trocarCliente(this.value)">'+opts+'</select>'
+      + '<div class="cli-acts"><button onclick="novoCliente()" title="Adicionar cliente">+ Novo</button><button onclick="renomearCliente()" title="Renomear cliente">Renomear</button><button onclick="excluirCliente()" title="Excluir cliente">Excluir</button></div>';
+  }
   const R = resumoGeral();
   const nv = document.getElementById('navVerdict');
   nv.className = 'nav-verdict '+(R.aptoII?'ok':'nao');
   nv.innerHTML = '<b>'+(R.aptoII?'✓ Apto ao Nível II':'Ainda não apto ao Nível II')+'</b>' + R.conf+'/24 ações conformes · Essenciais: '+(13-R.pendEss.length)+'/13';
   const el = document.getElementById('conteudo');
-  ({painel:vPainel,acoes:vAcoes,docs:vDocs,enq:vEnq,plano:vPlano,criador:vCriador,consult:vConsult,modelos:vModelos,preaud:vPre,config:vConfig})[S.vista](el);
+  (({clientes:vClientes,painel:vPainel,acoes:vAcoes,docs:vDocs,enq:vEnq,plano:vPlano,criador:vCriador,consult:vConsult,modelos:vModelos,preaud:vPre,config:vConfig})[S.vista]||vPainel)(el);
 }
 function irPara(v){ S.vista=v; salvar(); render(); window.scrollTo(0,0); }
+
+/* ---------------- CARTEIRA DE CLIENTES (portfólio) ---------------- */
+function _estadoDe(id){
+  let st=estadoInicial();
+  try{ const x=localStorage.getItem(chaveCliente(id)); if(x) st=Object.assign(st, JSON.parse(x)); }catch(e){}
+  if(!st.req) st.req={}; if(!st.docs) st.docs={}; if(!st.config) st.config={};
+  if(!st.plano) st.plano=[]; if(!st.anexos) st.anexos={};
+  if(!st.enq) st.enq={resolucao:'5272',nivelSugerido:2,itens:[],patrimonio:''};
+  return st;
+}
+// resumo de aderência de UM cliente sem mudar o cliente atual (troca o estado temporariamente)
+function resumoCliente(id){
+  const bak=S;
+  S=_estadoDe(id);
+  let r=null; try{ r=resumoGeral(); }catch(e){}
+  const cfg=Object.assign({},S.config||{});
+  const enq=S.enq||{};
+  const base=(enq.dair&&enq.dair.baseLimites)|| (parseFloat(enq.patrimonio)||0);
+  const temDair=!!(enq.dair);
+  const conferido=!!(enq.dair&&enq.dair.conferido);
+  S=bak;
+  return {r,cfg,base,temDair,conferido};
+}
+function abrirCliente(id){ trocarCliente(id); irPara('painel'); }
+
+function vClientes(el){
+  const cards = REG.lista.map(c=>{
+    const d=resumoCliente(c.id), r=d.r||{conf:0,pendEss:[1,2,3,4,5,6,7,8,9,10,11,12,13],aptoII:false};
+    const conf=r.conf||0, essOk=(13-(r.pendEss?r.pendEss.length:13)), apto=r.aptoII;
+    const pct=Math.round(100*conf/24);
+    const nome=esc(d.cfg.ente||d.cfg.rpps||c.nome||'Cliente');
+    const sub=esc(d.cfg.rpps && d.cfg.ente ? d.cfg.rpps : (d.cfg.uf?('UF '+d.cfg.uf):'Cadastro incompleto'))+(d.cfg.uf && !(d.cfg.rpps&&d.cfg.ente)?'':(d.cfg.uf?(' · '+d.cfg.uf):''));
+    const barColor = apto? 'var(--verde)' : (pct>=60?'var(--ouro)':'var(--vinho)');
+    const carteira = d.base>0 ? ('R$ '+fmtBRL(d.base)+(d.temDair?(d.conferido?' ✓':''):'')) : '—';
+    const atual = c.id===CLIENTE_ATUAL;
+    return `<div class="cli-card${atual?' atual':''}">
+      <h3>${nome}</h3>
+      <div class="uf">${sub}${atual?' · <b style="color:var(--ouro)">em edição</b>':''}</div>
+      <span class="cli-badge ${apto?'ok':'no'}">${apto?'&#10003; Apto ao Nível II':'Em implantação'}</span>
+      <div class="cli-bar"><span style="width:${pct}%;background:${barColor}"></span></div>
+      <div class="cli-metrics">
+        <div><b>${conf}/24</b>ações conformes</div>
+        <div><b>${essOk}/13</b>essenciais</div>
+        <div><b>${carteira}</b>carteira (base)</div>
+      </div>
+      <div class="acoesbar">
+        <button class="btn primario" onclick="abrirCliente('${c.id}')">Abrir</button>
+        ${atual?'<button class="btn" onclick="renomearCliente()">Renomear</button>':''}
+      </div>
+    </div>`;
+  }).join('');
+  el.innerHTML = `
+  <div class="topo"><div>
+    <h2>Carteira de clientes</h2>
+    <div class="sub">${REG.lista.length} cliente${REG.lista.length===1?'':'s'} cadastrado${REG.lista.length===1?'':'s'}. Cada RPPS tem cadastro, ações, carteira e anexos próprios. Clique em <b>Abrir</b> para trabalhar no cliente; o sistema inteiro passa a refletir os dados dele.</div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primario" onclick="novoCliente()">+ Novo cliente</button><button class="btn" onclick="exportarTodos()">Exportar todos (backup)</button></div>
+  </div>
+  <div class="cli-grid">
+    ${cards}
+    <div class="cli-novo" onclick="novoCliente()">+ Adicionar cliente</div>
+  </div>`;
+}
 
 /* ---------------- PAINEL ---------------- */
 function vPainel(el){
@@ -933,8 +1133,8 @@ function vConfig(el){
     </div>
   </div>
   <div class="card"><h3 class="serif" style="color:var(--ink);font-size:16px;margin-bottom:8px">Dados e backup</h3>
-    <p style="font-size:13.5px;color:var(--suave);margin-bottom:10px">O preenchimento é salvo automaticamente no navegador (localStorage) e os <b>arquivos anexados</b> ficam guardados localmente no banco do navegador (IndexedDB) deste computador. O backup em JSON leva todo o preenchimento, os metadados dos anexos e os resultados das análises — mas <b>não os arquivos binários</b>: guarde os PDFs/JPGs originais no dossiê de evidências. A leitura automática (pdf.js/OCR Tesseract em português) baixa as bibliotecas da internet na primeira utilização; depois disso funciona com os arquivos locais.</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primario" onclick="exportar()">Exportar backup (.json)</button><label class="btn" style="display:inline-block">Importar backup<input type="file" accept=".json" style="display:none" onchange="importar(event)"></label><button class="btn" onclick="if(confirm('Apagar todos os dados preenchidos?')){localStorage.removeItem(CHAVE);location.reload();}">Limpar tudo</button></div>
+    <p style="font-size:13.5px;color:var(--suave);margin-bottom:10px">Cada <b>cliente</b> tem seu próprio cadastro, ações, carteira e anexos, salvos automaticamente no navegador deste computador (localStorage + IndexedDB). Use o seletor no topo da barra lateral para trocar de cliente. O backup em JSON leva todo o preenchimento e os metadados dos anexos — mas <b>não os arquivos binários</b>: guarde os PDFs/JPGs originais no dossiê de evidências. Para trocar de computador ou fazer cópia de segurança de toda a carteira de clientes, use <b>“Exportar TODOS os clientes”</b>.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primario" onclick="exportar()">Exportar backup (deste cliente)</button><button class="btn" onclick="exportarTodos()">Exportar TODOS os clientes</button><label class="btn" style="display:inline-block">Importar backup<input type="file" accept=".json" style="display:none" onchange="importar(event)"></label><button class="btn" onclick="if(confirm('Apagar todos os dados preenchidos DESTE cliente? (Os demais clientes não são afetados.)')){localStorage.removeItem(chaveCliente(CLIENTE_ATUAL));location.reload();}">Limpar este cliente</button></div>
   </div>`;
 }
 function cfg(k,v){ S.config[k]=v; salvar(); render(); }
@@ -2626,7 +2826,9 @@ function mRelEnq(){
 }
 
 /* ---------------- INICIALIZAÇÃO ---------------- */
+carregarRegistro();
 carregar();
+if(REG.lista.length>1) S.vista='clientes';   // com vários clientes, abre a carteira
 render();
 window.addEventListener('afterprint',()=>{ document.getElementById('printArea').innerHTML=''; });
 </script>
