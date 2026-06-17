@@ -728,6 +728,8 @@ function carregar(){
   if(!S.consultoria) S.consultoria={empresa:'',cnpj:'',consultor:'',registro:'',contrato:'',objeto:'Implantação do Pró-Gestão RPPS — Nível II',inicio:'',fim:'',escopo:'',obs:''};
   if(!S.consTab) S.consTab='painel';
   S.novaAtiv=S.novaAtiv||null;
+  if(!S.docsRPPS) S.docsRPPS={};
+  Object.values(S.docsRPPS).forEach(r=>{ if(r) r.busy=false; });
   if(!S.enq) S.enq={resolucao:'5272',nivelSugerido:2,itens:[],patrimonio:'',metaAtuarial:'',dataPos:''};
   if(S.config && (S.config.nivelAlvo==null)) S.config.nivelAlvo=2;
 }
@@ -902,7 +904,7 @@ function _estadoDe(id){
   let st=estadoInicial();
   try{ const x=localStorage.getItem(chaveCliente(id)); if(x) st=Object.assign(st, JSON.parse(x)); }catch(e){}
   if(!st.req) st.req={}; if(!st.docs) st.docs={}; if(!st.config) st.config={};
-  if(!st.plano) st.plano=[]; if(!st.anexos) st.anexos={};
+  if(!st.plano) st.plano=[]; if(!st.anexos) st.anexos={}; if(!st.docsRPPS) st.docsRPPS={};
   if(!st.enq) st.enq={resolucao:'5272',nivelSugerido:2,itens:[],patrimonio:''};
   if(st.config && st.config.nivelAlvo==null) st.config.nivelAlvo=2;
   try{ if(st.enq && !st.enq.limites) st.enq.limites=limitesPadrao(st.enq.resolucao||'5272'); }catch(e){}
@@ -1053,6 +1055,7 @@ function cardAcao(a){
     </div>
     <div class="acao-body">
       <div class="resumo-nivel"><b>Exigência do Nível II:</b> ${esc(a.resumo)}</div>
+      ${notaNivel(a)}
       ${disp? '<div class="aviso">Ação dispensada: o RPPS está marcado como enquadrado no art. 280 da Portaria MTP nº 1.467/2022 (ver Configurações). A ação conta como atendida.</div>':''}
       <div class="sec-title">Requisitos de conformidade</div>
       ${a.req.map((r,i)=>`
@@ -1373,6 +1376,224 @@ function anexosPrint(a){
 }
 
 /* ================================================================
+   EXIGÊNCIA POR NÍVEL (deltas orientativos) — Feature F
+   ================================================================ */
+const EXIG_NIVEL = {
+ '1.4':{3:'Acompanhamento formal das pendências (plano de providências) e reporte periódico ao Conselho.',4:'Estrutura de controle interno mais robusta, com área/servidor formalmente dedicado.'},
+ '1.6':{3:'Rotinas adicionais de batimento e validação cadastral formalizadas e documentadas.'},
+ '2.1':{3:'Inclui a alínea “k” do Relatório de Governança (passivo judicial/contingências).',4:'Inclui a alínea “k” (passivo judicial) e maior profundidade analítica no relatório.'},
+ '2.5':{3:'Programa estruturado de saúde e segurança do servidor; perícia médica formalizada.'},
+ '2.6':{3:'Maior detalhamento de credenciamento, diligência e gestão de riscos na Política de Investimentos.',4:'Política de Investimentos com gestão de riscos formal (ex.: limites de risco/VaR).'},
+ '2.7':{3:'Certificação de todos os membros do Comitê e regimento interno formal.',4:'Comitê com exigências de certificação/experiência ampliadas.'},
+ '2.8':{3:'Inclui a alínea “k” (passivo judicial) e itens adicionais de transparência ativa.',4:'Transparência ampliada: alínea “k” e divulgação proativa de mais demonstrativos.'},
+ '2.11':{1:'Basta um canal de atendimento (“fale conosco”).',3:'Ouvidoria formal, com ouvidor designado e prazos de resposta às demandas.',4:'Ouvidoria formal estruturada e integrada ao tratamento de demandas.'},
+ '2.12':{3:'Requisitos de formação/experiência da Diretoria Executiva mais rígidos.',4:'Exigências de qualificação da Diretoria ampliadas.'},
+ '2.16':{3:'Quadro próprio com servidores efetivos suficientes (estrutura mais robusta).',4:'Estrutura de pessoal compatível com RPPS de grande porte.'}
+};
+function notaNivel(a){
+  const nv = nivelAlvo(); if(nv===2) return '';
+  const e = EXIG_NIVEL[a.id]; const delta = e && e[nv];
+  const txt = delta
+    ? '<b>Ajuste para o '+NIVEIS_PG[nv]+':</b> '+esc(delta)
+    : '<b>'+NIVEIS_PG[nv]+':</b> confira no Manual 4.0 se há exigência adicional para esta ação — a descrição acima é a base do Nível II.';
+  return '<div class="resumo-nivel" style="border-left:4px solid var(--ouro);background:rgba(193,154,90,.08)">'+txt+'</div>';
+}
+
+/* ================================================================
+   CENTRAL DE DOCUMENTOS DO RPPS — Feature G
+   Lê demonstrativos oficiais (texto/OCR), verifica elementos por nível
+   e vincula o arquivo como evidência na ação relacionada.
+   ================================================================ */
+const DOCS_RPPS = [
+ {id:'dair', sigla:'DAIR', nome:'Demonstrativo das Aplicações e Investimentos dos Recursos', periodicidade:'Mensal', acoes:['2.6','2.7'], minNivel:1, rota:'enq',
+   alimenta:'Carteira e enquadramento de investimentos (Resolução CMN 5.272/2025) — leitura completa na aba Enquadramento.', chaves:[]},
+ {id:'dpin', sigla:'DPIN', nome:'Demonstrativo da Política de Investimentos', periodicidade:'Anual', acoes:['2.6'], minNivel:1,
+   alimenta:'Política de Investimentos (ação 2.6): metas, segmentos e limites.',
+   chaves:[{l:'Política de investimentos',t:['politica de investimento']},{l:'Meta atuarial/rentabilidade',t:['meta atuarial','rentabilidade','indice de referencia','benchmark']},{l:'Segmentos/alocação',t:['renda fixa','renda variavel','segmento','alocacao']},{l:'Limites/Resolução CMN',t:['limite','cmn','5.272','5272','4.963','4963','resolucao']},{l:'Comitê/aprovação',t:['comite','aprova','conselho']}],
+   porNivel:{3:[{l:'Credenciamento/diligência',t:['credenciament','diligencia','due diligence']}],4:[{l:'Gestão de riscos formal',t:['gestao de risco','var','value at risk','stress test']}]}},
+ {id:'draa', sigla:'DRAA', nome:'Demonstrativo de Resultados da Avaliação Atuarial', periodicidade:'Anual', acoes:['2.3'], minNivel:1,
+   alimenta:'Relatório de Gestão Atuarial (ação 2.3): resultado, custeio e reservas.',
+   chaves:[{l:'Avaliação atuarial',t:['avaliacao atuarial','atuario','draa']},{l:'Reserva matemática',t:['reserva matematica','provisao matematica']},{l:'Resultado (déficit/superávit)',t:['deficit','superavit','resultado atuarial','equilibrio']},{l:'Plano de custeio/alíquota',t:['custeio','aliquota','contribuicao']},{l:'Hipóteses/meta atuarial',t:['hipotese','meta atuarial','taxa de juros']}]},
+ {id:'dipr', sigla:'DIPR', nome:'Demonstrativo de Informações Previdenciárias e Repasses', periodicidade:'Bimestral', acoes:['1.6'], minNivel:1,
+   alimenta:'Base previdenciária e repasses (alimenta a ação 1.6 e a transparência).',
+   chaves:[{l:'Bases de cálculo',t:['base de calculo','bases de calculo','contribuic']},{l:'Repasses',t:['repasse','repassad']},{l:'Patronal/servidores',t:['patronal','servidor']},{l:'Aposentados/pensionistas',t:['aposentad','pensionista']},{l:'Parcelamentos/acordos',t:['parcelament','acordo']}]},
+ {id:'balancete', sigla:'Balancete', nome:'Balancete Contábil', periodicidade:'Mensal/Bimestral', acoes:['2.8','2.1'], minNivel:1,
+   alimenta:'Demonstrações contábeis (transparência 2.8 e RGC 2.1).',
+   chaves:[{l:'Ativo',t:['ativo']},{l:'Passivo',t:['passivo']},{l:'Receitas',t:['receita']},{l:'Despesas',t:['despesa']},{l:'Saldo/disponibilidades',t:['saldo','disponibilidade','banco','conta']}]},
+ {id:'repasse', sigla:'Repasses', nome:'Comprovantes de Repasse das Contribuições', periodicidade:'Mensal', acoes:['1.6'], minNivel:1,
+   alimenta:'Comprovação tempestiva dos repasses (alimenta a ação 1.6).',
+   chaves:[{l:'Comprovante/guia',t:['comprovante','guia','recolhimento']},{l:'Repasse/transferência',t:['repasse','transferencia']},{l:'Data de pagamento',t:['data','pagamento','vencimento']},{l:'Valor',t:['valor','r$']}]}
+];
+function analisarDocRPPS(doc, txt, ocr, nivel){
+  const N = norm(txt);
+  let chaves = (doc.chaves||[]).slice();
+  if(doc.porNivel){ [3,4].forEach(L=>{ if(nivel>=L && doc.porNivel[L]) chaves = chaves.concat(doc.porNivel[L]); }); }
+  const achados=[], ausentes=[];
+  chaves.forEach(c=>{ (c.t.some(v=>N.includes(v))?achados:ausentes).push(c.l); });
+  const chars = N.replace(/\s+/g,' ').trim().length;
+  let verd, score=0;
+  if(chars<80){ verd='ilegivel'; }
+  else { const cr = chaves.length? achados.length/chaves.length : .5; score=Math.round(100*cr); verd = score>=65?'forte': score>=35?'parcial':'nao'; }
+  return {verd,score,achados,ausentes,chars,ocr:!!ocr,nivel,data:hoje()};
+}
+function detalheDocRPPS(an){
+  if(an.verd==='erro') return '<div class="an-det"><b>Leitura não realizada:</b> '+esc(an.msg||'erro desconhecido')+'</div>';
+  if(an.verd==='ilegivel') return '<div class="an-det">Texto não extraível ('+an.chars+' caracteres'+(an.ocr?', mesmo com OCR':'')+'). Verifique a qualidade do arquivo ou confira manualmente.</div>';
+  return '<div class="an-det"><b>Leitura automática — '+an.score+'% dos elementos esperados'+(an.ocr?' (via OCR)':'')+' · '+an.data+':</b> '
+   +(an.achados.length? 'encontrados: <span style="color:var(--verde)">'+an.achados.map(esc).join('; ')+'</span>. ':'')
+   +(an.ausentes.length? 'não localizados: <span style="color:var(--vinho)">'+an.ausentes.map(esc).join('; ')+'</span>. ':'')
+   +'<i style="color:var(--suave)">Conferência de conteúdo (palavras-chave) — apoia, mas não substitui a análise técnica.</i></div>';
+}
+
+/* ---- Extração campo a campo dos demonstrativos (pendência nº 1) ----
+   Trabalha sobre o texto SEM acento e com espaços colapsados (robusto ao
+   fatiamento do pdf.js em PDFs iText rotacionados). Cada regra captura um
+   ou dois grupos; 'fmt' formata o valor exibido; 'aplica' indica o destino. */
+function _flat(t){ return String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim(); }
+const ROTULOS_CAMPO = {
+  cnpj:'CNPJ do ente', bimestre:'Bimestre', servAtivos:'Servidores ativos', aposentados:'Aposentados',
+  pensionistas:'Pensionistas', dependentes:'Dependentes', ingressos:'Total de ingressos', utilizacao:'Total de utilização',
+  resultado:'Resultado final apurado', indice:'Índice da meta', rentReal:'Rentabilidade real esperada',
+  gestao:'Forma de gestão', aprovPI:'Aprovação da Política de Investimentos', atuario:'Atuário responsável',
+  dataAval:'Data da avaliação', exercicio:'Exercício', aliqEnte:'Alíquota do ente', juros:'Taxa de juros real (meta)',
+  superavit:'Superávit atuarial', deficit:'Déficit atuarial', ativos:'Ativos garantidores',
+  duracao:'Duração do passivo (anos)', planoAmort:'Plano de amortização do déficit'
+};
+const EXTRATORES = {
+  dipr:[
+    {k:'cnpj', re:/(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/},
+    {k:'bimestre', re:/([A-Z]{3}\/[A-Z]{3})\s*-\s*(20\d{2})?/, fmt:m=>m[2]?m[1]+' - '+m[2]:m[1]},
+    {k:'servAtivos', re:/9\.1\s*-\s*SERVIDORES\s+([\d.]+)\s+([\d.]+)/, fmt:m=>m[1]+' / '+m[2]+' (mar/abr)'},
+    {k:'aposentados', re:/9\.2\s*-\s*APOSENTADOS\s+([\d.]+)\s+([\d.]+)/, fmt:m=>m[1]+' / '+m[2]+' (mar/abr)'},
+    {k:'pensionistas', re:/9\.3\s*-\s*PENSIONISTAS\s+([\d.]+)\s+([\d.]+)/, fmt:m=>m[1]+' / '+m[2]+' (mar/abr)'},
+    {k:'dependentes', re:/9\.4\s*-\s*DEPENDENTES\s+([\d.]+)\s+([\d.]+)/, fmt:m=>m[1]+' / '+m[2]+' (mar/abr)'},
+    {k:'ingressos', re:/12\.1\s*-\s*TOTAL DE INGRESSOS\s+([\d.,]+)\s+([\d.,]+)/, fmt:m=>'R$ '+m[1]+' / R$ '+m[2]+' (mar/abr)'},
+    {k:'utilizacao', re:/12\.2\s*-\s*TOTAL DE UTILIZACAO\s+([\d.,]+)\s+([\d.,]+)/, fmt:m=>'R$ '+m[1]+' / R$ '+m[2]+' (mar/abr)'},
+    {k:'resultado', re:/12\.3\s*-\s*RESULTADO FINAL APURADO\s+([\d.,]+)\s+([\d.,]+)/, fmt:m=>'R$ '+m[1]+' / R$ '+m[2]+' (mar/abr)'}
+  ],
+  dpin:[
+    {k:'indice', re:/Indice de\s*(IPCA|INPC|IGP-?M|IGPM)/, fmt:m=>m[1]},
+    {k:'rentReal', re:/Rentabilidade Anual Real Esperada\s*(20\d{2})\s+(\d{1,2},\d{2})/, fmt:m=>m[2]+'% a.a. ('+m[1]+')', aplica:'meta'},
+    {k:'gestao', re:/(Por Entidade Autorizada e Credenciada|Por Gestao Propria|Por Carteira Propria)/, fmt:m=>m[1].replace(/Gestao/,'Gestão').replace(/Propria/,'Própria')},
+    {k:'aprovPI', re:/APROVACAO DA POLITICA DE INVESTIMENTOS[^0-9]{0,10}(\d{2}\/\d{2}\/20\d{2})/, fmt:m=>m[1]}
+  ],
+  draa:[
+    {k:'atuario', re:/([A-Z]{3,}(?: [A-Z]+){1,4})\s+MTE:?\s*(\d{3,5})/, fmt:m=>m[1].trim()+' (MTE '+m[2]+')'},
+    {k:'dataAval', re:/Data da Avaliacao:\s*(\d{2}\/\d{2}\/20\d{2})/, fmt:m=>m[1], aplica:'dataPos'},
+    {k:'exercicio', re:/Exercicio do DRAA:\s*(20\d{2})/, fmt:m=>m[1]},
+    {k:'aliqEnte', re:/Ente Federativo\s+R\$ ?[\d.,]+\s+(\d{1,2},\d{2})/, fmt:m=>m[1]+'%'},
+    {k:'juros', re:/Taxa de Juros Real para o Exercicio\s*PERCENTUAL\s*(\d{1,2}[.,]\d{2})/, fmt:m=>m[1].replace('.',',')+'% a.a.', aplica:'meta'},
+    {k:'superavit', re:/Superavit Atuarial\s*R\$\s*([\d.,]+)/, fmt:m=>'R$ '+m[1]},
+    {k:'deficit', re:/Deficit Atuarial\s*R\$\s*([\d.,]+)/, fmt:m=>'R$ '+m[1]},
+    {k:'ativos', re:/ATIVOS GARANTIDORES DOS COMPROMISSOS DO PLANO DE BENEFICIOS\s*R\$\s*([\d.,]+)/, fmt:m=>'R$ '+m[1], aplica:'patrimonio'},
+    {k:'duracao', re:/Duracao do Passivo\s+(\d{1,2}[.,]\d{1,2})/, fmt:m=>m[1].replace('.',',')+' anos'},
+    {k:'planoAmort', re:/Equacionamento do Deficit Atuarial Implementado em Lei:\s*(Sim|Nao)/, fmt:m=>(m[1]==='Sim'?'Sim':'Não')}
+  ]
+};
+function extrairCamposDoc(docId, txt){
+  const regras = EXTRATORES[docId]; if(!regras) return [];
+  const F = _flat(txt), out=[];
+  regras.forEach(r=>{
+    const m = F.match(r.re);
+    if(m){ out.push({k:r.k, label:ROTULOS_CAMPO[r.k]||r.k, v:(r.fmt?r.fmt(m):m[1]), aplica:r.aplica||null}); }
+  });
+  return out;
+}
+function htmlCamposDoc(docId){
+  const r = S.docsRPPS[docId]; if(!r || !r.campos || !r.campos.length) return '';
+  const linhas = r.campos.map(c=>'<tr><td style="color:var(--suave);padding:2px 8px 2px 0">'+esc(c.label)+'</td><td><b>'+esc(c.v)+'</b></td></tr>').join('');
+  const temAplica = r.campos.some(c=>c.aplica);
+  return '<div class="an-det" style="margin-top:6px"><b>Dados extraídos do documento:</b>'
+    +'<table style="margin-top:4px;font-size:12.5px">'+linhas+'</table>'
+    +(temAplica?'<button class="btn mini" style="margin-top:6px" onclick="aplicarCamposDoc(\''+docId+'\')">Usar no Enquadramento/Configurações</button>':'')
+    +'</div>';
+}
+function aplicarCamposDoc(docId){
+  const r = S.docsRPPS[docId]; if(!r || !r.campos) return;
+  const g = k => (r.campos.find(c=>c.k===k)||{}).v;
+  S.enq = S.enq || {};
+  const aplicados=[];
+  // meta atuarial: combina índice (DPIN) + taxa real (DRAA/DPIN) quando disponível
+  if(!S.enq.metaAtuarial){
+    const idx = g('indice'); const taxa = (g('juros')||g('rentReal')||'').match(/\d{1,2},\d{2}/);
+    if(taxa){ S.enq.metaAtuarial = (idx? idx+' + ':'')+taxa[0]+'% a.a.'; aplicados.push('meta atuarial'); }
+  }
+  if(!S.enq.patrimonio){ const at=(g('ativos')||'').replace(/[^\d,]/g,''); if(at){ S.enq.patrimonio=at; aplicados.push('patrimônio (ativos garantidores)'); } }
+  if(!S.enq.dataPos){ const dp=g('dataPos')||g('dataAval'); if(dp){ S.enq.dataPos=dp; aplicados.push('data-base'); } }
+  if(!aplicados.length){ alert('Nada a preencher: os campos do Enquadramento já estão preenchidos (não sobrescrevo dados existentes).'); return; }
+  salvar(); render();
+  alert('Preenchido a partir do '+(DOCS_RPPS.find(d=>d.id===docId)||{}).sigla+': '+aplicados.join(', ')+'.');
+}
+function anexarDocRPPS(docId){
+  const doc = DOCS_RPPS.find(d=>d.id===docId); if(!doc) return;
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='.pdf,.jpg,.jpeg,.png';
+  inp.onchange = async ()=>{
+    const file=inp.files[0]; if(!file) return;
+    if(file.size>20*1024*1024){ alert('Arquivo acima de 20 MB ignorado.'); return; }
+    const fid='docrpps-'+docId+'-'+Date.now()+'-'+Math.floor(Math.random()*1e4);
+    try{ await dbPut({id:fid, blob:file, name:file.name, type:file.type}); }
+    catch(e){ alert('Não foi possível armazenar o arquivo neste navegador: '+e); return; }
+    S.docsRPPS[docId]={fid, name:file.name, size:file.size, data:hoje(), busy:true};
+    salvar(); render();
+    try{
+      const {txt,ocr} = await extrairTexto(file, file.name);
+      const an = analisarDocRPPS(doc, txt, ocr, nivelAlvo());
+      const campos = extrairCamposDoc(docId, txt);
+      S.docsRPPS[docId]=Object.assign(S.docsRPPS[docId]||{}, {busy:false, an, campos});
+      const aid=(doc.acoes||[])[0];
+      if(aid){
+        const key=aid+'-0';
+        S.anexos[key]=S.anexos[key]||[];
+        if(!S.anexos[key].some(x=>x.docRPPS===docId)){
+          const acao=ACOES.find(a=>a.id===aid);
+          S.anexos[key].push({id:fid, name:file.name, size:file.size, type:file.type, data:hoje(), docRPPS:docId, an:analisarTexto(aid, acao? acao.docs[0]:'', txt, ocr)});
+          if(['pend','sol'].includes(docStatus(aid,0))) S.docs[key]='rec';
+        }
+      }
+    }catch(e){ S.docsRPPS[docId]=Object.assign(S.docsRPPS[docId]||{}, {busy:false, an:{verd:'erro',msg:String(e&&e.message||e),score:0,achados:[],ausentes:[],chars:0,data:hoje()}}); }
+    salvar(); render();
+  };
+  inp.click();
+}
+async function removerDocRPPS(docId){
+  if(!confirm('Remover este documento e a leitura associada?')) return;
+  const r=S.docsRPPS[docId];
+  if(r && r.fid){
+    try{ await dbDel(r.fid); }catch(e){}
+    const doc=DOCS_RPPS.find(d=>d.id===docId); const aid=doc&&(doc.acoes||[])[0];
+    if(aid){ const key=aid+'-0'; S.anexos[key]=(S.anexos[key]||[]).filter(x=>x.docRPPS!==docId); }
+  }
+  delete S.docsRPPS[docId];
+  salvar(); render();
+}
+function htmlCentralDocs(){
+  const nv=nivelAlvo();
+  const cards=DOCS_RPPS.map(doc=>{
+    const r=S.docsRPPS[doc.id];
+    const exigido = nv>=doc.minNivel;
+    let badge;
+    if(r && r.busy) badge='<span class="pill p-pend">Lendo…</span>';
+    else if(r && r.an) badge=verdBadge({an:r.an});
+    else badge='<span class="pill p-pend">Não enviado</span>';
+    const botoes = doc.rota==='enq'
+      ? '<button class="btn primario" onclick="irPara(\'enq\')">Abrir no Enquadramento</button>'
+      : '<button class="btn primario" onclick="anexarDocRPPS(\''+doc.id+'\')">'+(r?'Substituir':'Enviar')+' PDF/JPG</button>'+(r?' <button class="btn mini" onclick="removerDocRPPS(\''+doc.id+'\')">Remover</button>':'');
+    return '<div class="card modelo-card">'
+      +'<h3>'+doc.sigla+' — '+esc(doc.nome)+' '+badge+'</h3>'
+      +'<p style="margin:4px 0;font-size:12.5px"><b>Periodicidade:</b> '+esc(doc.periodicidade)+' · <b>Ações:</b> '+(doc.acoes||[]).join(', ')+(exigido?'':' · <span style="color:var(--suave)">(exigível a partir do '+NIVEIS_PG[doc.minNivel]+')</span>')+'</p>'
+      +'<p style="color:var(--suave);font-size:12.5px">'+esc(doc.alimenta)+'</p>'
+      +(r && r.an && !r.busy? detalheDocRPPS(r.an):'')
+      +htmlCamposDoc(doc.id)
+      +'<div style="margin-top:8px">'+botoes+'</div>'
+      +'</div>';
+  }).join('');
+  return '<div class="card" style="margin-bottom:14px;border-left:4px solid var(--ouro)">'
+    +'<h3 class="serif" style="color:var(--ink);font-size:16px;margin-bottom:6px">Central de Documentos do RPPS</h3>'
+    +'<div class="sub">Envie os demonstrativos oficiais. O sistema lê o conteúdo (com OCR quando necessário), indica se o documento contém os elementos esperados para o nível pretendido (<b>'+nivAlvoTxt()+'</b>) e o vincula automaticamente como evidência na ação correspondente.</div>'
+    +'<div class="grid c3" style="margin-top:12px">'+cards+'</div></div>';
+}
+
+/* ================================================================
    MOTOR DE IMPRESSÃO E MODELOS DE DOCUMENTOS
    ================================================================ */
 function cabecalhoDoc(titulo, subtitulo){
@@ -1520,6 +1741,7 @@ function vModelos(el){
   ];
   el.innerHTML = `
   <div class="topo"><div><h2>Modelos e Relatórios</h2><div class="sub">Documentos prontos para impressão ou geração de PDF (use Imprimir → “Salvar como PDF” no navegador). Os modelos são preenchidos automaticamente com os dados das Configurações e do estado atual do sistema.</div></div></div>
+  ${htmlCentralDocs()}
   <div class="grid c3">
   ${modelos.map(m=>`<div class="card modelo-card"><h3>${m[0]}</h3><p>${m[1]}</p><button class="btn primario" onclick="${m[2]}">Gerar / Imprimir</button></div>`).join('')}
   </div>
