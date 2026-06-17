@@ -730,6 +730,7 @@ function carregar(){
   S.novaAtiv=S.novaAtiv||null;
   if(!S.docsRPPS) S.docsRPPS={};
   Object.values(S.docsRPPS).forEach(r=>{ if(r) r.busy=false; });
+  if(S.apiCadprev) S.apiCadprev.busy=false;
   if(!S.enq) S.enq={resolucao:'5272',nivelSugerido:2,itens:[],patrimonio:'',metaAtuarial:'',dataPos:''};
   if(S.config && (S.config.nivelAlvo==null)) S.config.nivelAlvo=2;
 }
@@ -1524,6 +1525,83 @@ function aplicarCamposDoc(docId){
   salvar(); render();
   alert('Preenchido a partir do '+(DOCS_RPPS.find(d=>d.id===docId)||{}).sigla+': '+aplicados.join(', ')+'.');
 }
+
+/* ---- Cliente da API CADPREV via proxy CORS (Cloudflare Worker) ----
+   A API do governo responde 200 mas não envia Access-Control-Allow-Origin,
+   então o navegador bloqueia a leitura direta. O usuário publica um Worker
+   (arquivo cadprev-proxy.js) e cola a URL dele aqui. O proxy fica salvo
+   localmente (fora do estado por cliente e fora dos backups, pois é infra). */
+function getProxy(){ try{ return localStorage.getItem('progestao_n2_apiproxy')||''; }catch(e){ return ''; } }
+function setProxyUI(){
+  const v=((document.getElementById('apiProxyInp')||{}).value||'').trim();
+  try{ localStorage.setItem('progestao_n2_apiproxy', v); }catch(e){}
+  render();
+}
+function _apiUrl(proxy, ep, cnpj){
+  const base=String(proxy||'').trim().replace(/\/+$/,'');
+  const dig=String(cnpj||'').replace(/\D/g,'');
+  return base+'/'+ep+'?nr_cnpj_entidade='+dig;
+}
+function _apiArr(js){
+  return Array.isArray(js)?js
+    :(js&&Array.isArray(js.content)?js.content
+    :(js&&Array.isArray(js.data)?js.data
+    :(js?[js]:[])));
+}
+const ENDPOINTS_API = [
+  {ep:'DAIR_IDENTIFICACAO', nome:'DAIR — Identificação'},
+  {ep:'DAIR_CARTEIRA', nome:'DAIR — Carteira de investimentos'},
+  {ep:'DAIR_GOVERNANCA', nome:'DAIR — Governança'},
+  {ep:'DAIR_FORMA_GESTAO', nome:'DAIR — Forma de gestão'},
+  {ep:'RPPS_REGIME_PREVIDENCIARIO', nome:'RPPS — Regime previdenciário'}
+];
+async function buscarApiCadprev(){
+  const proxy=getProxy();
+  if(!proxy){ alert('Cole primeiro a URL do proxy (Cloudflare Worker) no campo acima e clique em "Salvar proxy".'); return; }
+  const cnpj=String((document.getElementById('apiCnpjInp')||{}).value||'').replace(/\D/g,'');
+  if(cnpj.length!==14){ alert('Informe o CNPJ do ente com 14 dígitos.'); return; }
+  S.apiCadprev={cnpj, ts:hoje(), busy:true, data:[]}; salvar(); render();
+  const out=[];
+  for(const e of ENDPOINTS_API){
+    const rec={ep:e.ep, nome:e.nome};
+    try{
+      const r=await fetch(_apiUrl(proxy, e.ep, cnpj), {headers:{'Accept':'application/json'}});
+      const txt=await r.text();
+      let js=null; try{ js=JSON.parse(txt); }catch(_){}
+      const arr=_apiArr(js);
+      rec.ok=r.ok; rec.status=r.status; rec.count=arr.length; rec.sample=arr.length?arr[0]:null; rec.bruto=txt.slice(0,4000);
+    }catch(err){ rec.ok=false; rec.erro=String(err&&err.message||err); }
+    out.push(rec);
+    S.apiCadprev.data=out.slice(); render();
+    await new Promise(res=>setTimeout(res, 1100)); // respeita o limite de ~1 req/seg
+  }
+  S.apiCadprev.busy=false; salvar(); render();
+}
+function htmlApiCadprev(){
+  const proxy=getProxy(); const a=S.apiCadprev||null;
+  let res='';
+  if(a && a.data && a.data.length){
+    res='<div class="an-det" style="margin-top:8px"><b>Resultado'+(a.busy?' (consultando…)':'')+' — CNPJ '+esc(a.cnpj)+':</b>'
+      +'<table style="margin-top:4px;font-size:12.5px">'
+      +a.data.map(d=>'<tr><td style="padding:2px 8px 2px 0">'+esc(d.nome)+'</td><td>'
+        +(d.erro? '<span style="color:var(--vinho)">erro: '+esc(d.erro)+'</span>'
+          : (d.ok? '<span style="color:var(--verde)">'+d.count+' registro(s)</span>'
+            : '<span style="color:var(--vinho)">HTTP '+esc(d.status||'?')+'</span>'))
+        +'</td></tr>').join('')
+      +'</table>'
+      +(a.busy?'':'<div style="color:var(--suave);font-size:12px;margin-top:4px">Conexão validada. O <b>mapeamento campo a campo</b> (transformar esses registros nos campos do sistema) será calibrado com um exemplo real da resposta — copie aqui o JSON de um dos endpoints e eu mapeio.</div>')
+      +'</div>';
+  }
+  return '<div class="card" style="margin-bottom:14px;border-left:4px solid var(--ouro)">'
+    +'<h3 class="serif" style="color:var(--ink);font-size:16px;margin-bottom:6px">Buscar dados via API CADPREV <span class="pill p-pend">opcional</span></h3>'
+    +'<div class="sub">A API do governo bloqueia chamadas diretas do navegador (CORS), então é preciso um proxy gratuito (Cloudflare Worker — veja o arquivo <i>cadprev-proxy.js</i>). Cole a URL do seu Worker e o CNPJ do ente. Se preferir não usar, o envio de PDF acima continua funcionando normalmente.</div>'
+    +'<div style="margin-top:10px;display:flex;flex-direction:column;gap:6px;max-width:580px">'
+    +'<label style="font-size:12.5px">URL do proxy (Worker):<br><input id="apiProxyInp" value="'+esc(proxy)+'" placeholder="https://cadprev-proxy.SEU-USUARIO.workers.dev" style="width:100%;box-sizing:border-box"></label>'
+    +'<label style="font-size:12.5px">CNPJ do ente:<br><input id="apiCnpjInp" value="'+esc((a&&a.cnpj)||'')+'" placeholder="46.410.866/0001-71" style="width:100%;box-sizing:border-box"></label>'
+    +'<div style="margin-top:4px"><button class="btn mini" onclick="setProxyUI()">Salvar proxy</button> '
+    +'<button class="btn primario" onclick="buscarApiCadprev()"'+(a&&a.busy?' disabled':'')+'>'+(a&&a.busy?'Consultando…':'Buscar dados')+'</button></div>'
+    +'</div>'+res+'</div>';
+}
 function anexarDocRPPS(docId){
   const doc = DOCS_RPPS.find(d=>d.id===docId); if(!doc) return;
   const inp=document.createElement('input'); inp.type='file'; inp.accept='.pdf,.jpg,.jpeg,.png';
@@ -1741,6 +1819,7 @@ function vModelos(el){
   ];
   el.innerHTML = `
   <div class="topo"><div><h2>Modelos e Relatórios</h2><div class="sub">Documentos prontos para impressão ou geração de PDF (use Imprimir → “Salvar como PDF” no navegador). Os modelos são preenchidos automaticamente com os dados das Configurações e do estado atual do sistema.</div></div></div>
+  ${htmlApiCadprev()}
   ${htmlCentralDocs()}
   <div class="grid c3">
   ${modelos.map(m=>`<div class="card modelo-card"><h3>${m[0]}</h3><p>${m[1]}</p><button class="btn primario" onclick="${m[2]}">Gerar / Imprimir</button></div>`).join('')}
